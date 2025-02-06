@@ -13,7 +13,3 @@ RUN go mod download
 COPY pkg/ pkg/
 
 RUN go mod tidy
-
-COPY --from=builder /workspace/pkg/ /usr/local/lib/
-
-USER 1001
