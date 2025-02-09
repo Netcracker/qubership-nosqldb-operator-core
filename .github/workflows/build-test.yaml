@@ -13,14 +13,7 @@ env:
   PUSH: ${{ (github.event_name != 'workflow_dispatch' || inputs.publish_docker) && github.actor != 'dependabot[bot]' }}
 
 jobs:
-  multiplatform_build:
-    strategy:
-      fail-fast: false
-      matrix:
-        component:
-          - name: qubership-nosqldb-operator-core
-            file: build/Dockerfile
-            context: ""
+  build:
     runs-on: ubuntu-24.04
     steps:
       - name: Validate
@@ -47,7 +40,7 @@ jobs:
         id: get-ids-for-delete
         uses: Netcracker/get-package-ids@v0.0.1
         with:
-          component-name: ${{ matrix.component.name }}
+          component-name: qubership-nosqldb-operator-core
           component-tag: ${{ env.TAG_NAME }}
           access-token: ${{secrets.GITHUB_TOKEN}}
         if: ${{ env.PUSH }}
@@ -55,15 +48,15 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           no-cache: true
-          context: ${{ matrix.component.context }}
-          file: ${{ matrix.component.file }}
+          context: ""
+          file: build/Dockerfile
           platforms: linux/amd64 #,linux/arm64
           push: ${{ env.PUSH }}
-          tags: ghcr.io/netcracker/${{ matrix.component.name }}:${{ env.TAG_NAME }}
+          tags: ghcr.io/netcracker/qubership-nosqldb-operator-core:${{ env.TAG_NAME }}
           provenance: false
       - uses: actions/delete-package-versions@v5
         with: 
-          package-name: ${{ matrix.component.name }}
+          package-name: qubership-nosqldb-operator-core
           package-type: 'container'
           package-version-ids: ${{ steps.get-ids-for-delete.outputs.ids-for-delete }}
         if: ${{ steps.get-ids-for-delete.outputs.ids-for-delete != '' }}
