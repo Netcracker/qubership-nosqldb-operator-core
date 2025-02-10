@@ -21,6 +21,7 @@ type VaultHelper interface {
 	RotateRole(roleName string) error
 	IsVaultURL(path string) bool
 	GetEnvTemplateForVault(envName string, secretName string) v1.EnvVar
+	ResolvePassword(passAddress string) (string, error)
 }
 
 type VaulterHelperImpl struct {
@@ -31,6 +32,19 @@ func NewVaulterHelperImpl(vc VaultClientImpl) VaultHelper {
 	return VaulterHelperImpl{
 		VaultClient: vc,
 	}
+}
+
+func (v VaulterHelperImpl) ResolvePassword(passAddress string) (string, error) {
+	firstDelimiter := strings.Index(passAddress, ":")
+	secondDelimiter := strings.Index(passAddress, "#")
+	if firstDelimiter < 0 || secondDelimiter < 0 {
+		return "", fmt.Errorf("provided passAddress does not contain : or # delimiter")
+	}
+	role, err := v.VaultClient.VaultRead(passAddress[firstDelimiter+1 : secondDelimiter])
+	if err != nil {
+		return "", err
+	}
+	return role["password"].(string), nil
 }
 
 func (v VaulterHelperImpl) CreateDatabaseConfig(configName string, configSettings map[string]interface{}) error {
@@ -122,4 +136,8 @@ func GetVaultArgs(arguments []string) []string {
 		args = append(args, v)
 	}
 	return args
+}
+
+func GetVaultRoleName(cloudPublicHost, namespace, serviceAccount, user string) string {
+	return fmt.Sprintf("nc-%s_%s_%s_%s", cloudPublicHost, namespace, serviceAccount, user)
 }

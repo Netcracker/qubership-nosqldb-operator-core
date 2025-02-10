@@ -10,6 +10,7 @@ import (
 	mFake "github.com/Netcracker/qubership-nosqldb-operator-core/pkg/fake"
 	mTypes "github.com/Netcracker/qubership-nosqldb-operator-core/pkg/types"
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/vault"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/vault/mocks"
 	"github.com/docker/distribution/uuid"
 	"github.com/hashicorp/vault/api"
 	"github.com/stretchr/testify/mock"
@@ -294,7 +295,7 @@ func GenerateDefaultServiceWrapper(testName string, vaultImpl vault.VaultHelper)
 
 func TestExecutionCheck(t *testing.T) {
 	pass := uuid.Generate().String()
-	vaultImpl := vault.FakeVaultHelper{}
+	vaultImpl := &mocks.FakeVaultHelper{}
 	testFuncs := []func() CaseStruct{
 		func() CaseStruct {
 			vaultImpl.On("CheckSecretExists", "fakeSecretName").Return(false, make(map[string]interface{}), nil)
