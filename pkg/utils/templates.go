@@ -31,34 +31,30 @@ func PVCTemplate(storage types.StorageRequirements, pvcId int, nameFormat string
 		},
 	}
 
-	if storage.Size != nil &&
-		len(storage.Size) > 0 {
+	if len(storage.Size) > 0 {
 		properIndex := pvcId % len(storage.Size)
 		volumeSize := storage.Size[properIndex]
-		pvc.Spec.Resources = v1.ResourceRequirements{
+		pvc.Spec.Resources = v1.VolumeResourceRequirements{
 			Requests: v1.ResourceList{
 				v1.ResourceName(v1.ResourceStorage): resource.MustParse(volumeSize),
 			},
 		}
 	}
 
-	if storage.StorageClasses != nil &&
-		len(storage.StorageClasses) > 0 {
+	if len(storage.StorageClasses) > 0 {
 		properIndex := pvcId % len(storage.StorageClasses)
 		class := &storage.StorageClasses[properIndex]
 		pvc.ObjectMeta.Annotations["volume.beta.kubernetes.io/storage-class"] = *class
 		pvc.Spec.StorageClassName = class
 	}
 
-	if storage.Volumes != nil &&
-		len(storage.Volumes) > 0 {
+	if len(storage.Volumes) > 0 {
 		properIndex := pvcId % len(storage.Volumes)
 		pv := storage.Volumes[properIndex]
 		pvc.Spec.VolumeName = pv
 	}
 
-	if storage.MatchLabelSelectors != nil &&
-		len(storage.MatchLabelSelectors) > 0 {
+	if len(storage.MatchLabelSelectors) > 0 {
 		properIndex := pvcId % len(storage.MatchLabelSelectors)
 		labelsMap := storage.MatchLabelSelectors[properIndex]
 		pvc.Spec.Selector = &metav1.LabelSelector{
@@ -102,8 +98,31 @@ func ServiceAccountSecretTemplate(name string, saName string, namespace string) 
 	return secret
 }
 
-func RecyclerPodTemplate(pvcName string, namespace string, image string, nodeSelector map[string]string, tolerations []v1.Toleration, res v1.ResourceRequirements, securityContext *v1.PodSecurityContext) *v1.Pod {
+func RecyclerPodTemplate(pvcName string, namespace string, image string, nodeSelector map[string]string,
+	tolerations []v1.Toleration, res v1.ResourceRequirements, securityContext *v1.PodSecurityContext) *v1.Pod {
 	podName := fmt.Sprintf(constants.RecyclerNameTemplate, pvcName)
+	allowPrivilegeEscalation := false
+
+	affinity := v1.Affinity{
+		PodAntiAffinity: &v1.PodAntiAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: []v1.PodAffinityTerm{
+				{
+					LabelSelector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{
+								Key:      constants.Microservice,
+								Operator: "In",
+								Values: []string{
+									constants.RecyclerPod,
+								},
+							},
+						},
+					},
+					TopologyKey: constants.KubeHostName,
+				},
+			},
+		},
+	}
 	pod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podName,
@@ -130,6 +149,12 @@ func RecyclerPodTemplate(pvcName string, namespace string, image string, nodeSel
 				v1.Container{
 					Name:  fmt.Sprintf(constants.RecyclerNameTemplate, "container"),
 					Image: image,
+					SecurityContext: &v1.SecurityContext{
+						Capabilities: &v1.Capabilities{
+							Drop: []v1.Capability{"ALL"},
+						},
+						AllowPrivilegeEscalation: &allowPrivilegeEscalation,
+					},
 					Command: []string{
 						"/bin/sh",
 						"-c",
@@ -145,6 +170,7 @@ func RecyclerPodTemplate(pvcName string, namespace string, image string, nodeSel
 				},
 			},
 			NodeSelector: nodeSelector,
+			Affinity:     &affinity,
 			Tolerations:  tolerations,
 		},
 	}
@@ -188,6 +214,22 @@ func HeadlessServiceTemplate(name string, labels map[string]string, selectors ma
 
 }
 
+func MultiportServiceTemplate(name string, labels, selectors map[string]string, ports *[]v1.ServicePort, namespace string) *v1.Service {
+
+	return &v1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels:    labels,
+		},
+		Spec: v1.ServiceSpec{
+			Ports:    *ports,
+			Selector: selectors,
+		},
+	}
+
+}
+
 func GetEnvTemplateForVault(envName string, secretName string, secretKey string, vaultPath string) v1.EnvVar {
 	return v1.EnvVar{
 		Name:  envName,
@@ -203,10 +245,17 @@ func GetVaultEnvPath() string {
 }
 
 func GetInitContainerTemplateForVault(dockerImage string, resources *v1.ResourceRequirements) []v1.Container {
+	allowPrivilegeEscalation := false
 	initContainer := []v1.Container{
 		{
 			Name:  "copy-vault-env",
 			Image: dockerImage,
+			SecurityContext: &v1.SecurityContext{
+				Capabilities: &v1.Capabilities{
+					Drop: []v1.Capability{"ALL"},
+				},
+				AllowPrivilegeEscalation: &allowPrivilegeEscalation,
+			},
 			VolumeMounts: []v1.VolumeMount{
 				{
 					MountPath: VaultMounthPath,
@@ -413,18 +462,54 @@ func TLSSpecUpdate(depl *v1.PodSpec, rootCertPath string, tls types.TLS) {
 		GetPlainTextEnvVar("TLS_ROOTCERT", rootCertPath+tls.RootCAFileName))
 }
 
-func MultiportServiceTemplate(name string, labels, selectors map[string]string, ports *[]v1.ServicePort, namespace string) *v1.Service {
-
-	return &v1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-			Labels:    labels,
-		},
-		Spec: v1.ServiceSpec{
-			Ports:    *ports,
-			Selector: selectors,
-		},
+func TLSServerSpecUpdate(depl *v1.PodSpec, tls types.TLS, secretName string, mountPath string) {
+	if !tls.Enabled {
+		return
 	}
 
+	depl.Volumes = append(depl.Volumes,
+		v1.Volume{
+			Name: secretName,
+			VolumeSource: v1.VolumeSource{
+				Secret: &v1.SecretVolumeSource{
+					SecretName: secretName,
+				},
+			},
+		},
+	)
+
+	depl.Containers[0].VolumeMounts = append(depl.Containers[0].VolumeMounts,
+		v1.VolumeMount{
+			Name:      secretName,
+			ReadOnly:  true,
+			MountPath: mountPath,
+		},
+	)
+
+	depl.Containers[0].Env = append(depl.Containers[0].Env,
+		GetPlainTextEnvVar("INTERNAL_TLS_ENABLED", strconv.FormatBool(tls.Enabled)),
+		GetPlainTextEnvVar("INTERNAL_TLS_ROOTCERT", mountPath+tls.RootCAFileName),
+		GetPlainTextEnvVar("INTERNAL_TLS_CERTIFICATE_FILENAME", mountPath+tls.SignedCRTFileName),
+		GetPlainTextEnvVar("INTERNAL_TLS_KEY_FILENAME", mountPath+tls.PrivateKeyFileName),
+		GetPlainTextEnvVar("INTERNAL_TLS_PATH", mountPath),
+	)
+}
+
+func IsTLSEnableForDBAAS(aggregatorRegistrationAddress string, tlsEnabled bool) bool {
+	return strings.Contains(aggregatorRegistrationAddress, "https") && tlsEnabled
+}
+
+func GetHTTPPort(tlsEnabled bool) int32 {
+	var port int32 = 8080
+	if tlsEnabled {
+		port = 8443
+	}
+	return port
+}
+
+func GetHTTPProtocol(tlsEnabled bool) string {
+	if tlsEnabled {
+		return "https"
+	}
+	return "http"
 }
