@@ -9,4 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: go test ./...
+      - name: Set up Git Private Repo
+        run: |
+          git config --global url."https://github.com/Netcracker/qubership-nosqldb-operator-core.git".insteadOf "https://github.com/"	
+      - name: Run Go tests
+        run: go test ./...

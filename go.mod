@@ -1,4 +1,4 @@
-module github.com/Netcracker/base/qubership-nosqldb-operator-core
+module github.com/Netcracker/qubership-nosqldb-operator-core
 
 go 1.19
 
