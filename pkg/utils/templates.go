@@ -412,3 +412,19 @@ func TLSSpecUpdate(depl *v1.PodSpec, rootCertPath string, tls types.TLS) {
 		GetPlainTextEnvVar("TLS_ENABLED", strconv.FormatBool(tls.Enabled)),
 		GetPlainTextEnvVar("TLS_ROOTCERT", rootCertPath+tls.RootCAFileName))
 }
+
+func MultiportServiceTemplate(name string, labels, selectors map[string]string, ports *[]v1.ServicePort, namespace string) *v1.Service {
+
+	return &v1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels:    labels,
+		},
+		Spec: v1.ServiceSpec{
+			Ports:    *ports,
+			Selector: selectors,
+		},
+	}
+
+}
