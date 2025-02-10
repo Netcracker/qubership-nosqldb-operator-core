@@ -15,3 +15,15 @@ type DRExecutionError struct {
 func (r *DRExecutionError) Error() string {
 	return r.Msg
 }
+
+type NotFoundError struct {
+	Msg string
+}
+
+func (r *NotFoundError) Error() string {
+	return r.Msg
+}
+
+func NewNotFoundError(msg string) *NotFoundError {
+	return &NotFoundError{Msg: msg}
+}

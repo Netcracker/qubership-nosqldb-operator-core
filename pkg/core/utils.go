@@ -89,43 +89,23 @@ func MakeRange(min, max int) []int {
 	return a
 }
 
-func DeleteRuntimeObjectWithCheck(cl client.Client, object client.Object, checkTimeout int) error {
-	err := DeleteRuntimeObject(cl, object)
-
-	if errors.IsNotFound(err) {
-		return nil
-	}
-
-	zeroObject := Zero(object)
-	emptyObject := (zeroObject).(client.Object)
-	return wait.PollImmediate(time.Second, time.Second*time.Duration(checkTimeout), func() (done bool, err error) {
-		err = cl.Get(context.TODO(), types.NamespacedName{
-			Name: object.GetName(), Namespace: object.GetNamespace(),
-		}, emptyObject)
-
-		if err != nil {
-			if errors.IsNotFound(err) {
-				return true, nil
-			} else {
-				return false, err
-			}
-		}
-
-		return false, nil
-	})
+func RemoveElementFromSlice(s []string, i int) []string {
+	s[i] = s[len(s)-1]
+	return s[:len(s)-1]
 }
 
-// TODO looks like it should be in helper
-func DeleteRuntimeObject(client client.Client, object client.Object) error {
-	err := client.Delete(context.TODO(), object)
-	if err != nil && !errors.IsNotFound(err) {
-		return err
-	}
-
-	return nil
+func CreateOrUpdateRuntimeObject(kuberClient client.Client, scheme *runtime.Scheme, owner v12.Object,
+	object client.Object, meta v12.ObjectMeta, forceUpdate bool) error {
+	return CreateOrUpdateRuntimeObjectAndWait(kuberClient, scheme, owner, object, meta, forceUpdate, false)
 }
 
-func CreateOrUpdateRuntimeObject(kuberClient client.Client, scheme *runtime.Scheme, owner v12.Object, object client.Object, meta v12.ObjectMeta, forceUpdate bool) error {
+func CreateOrUpdateK8sObject(kuberClient client.Client, scheme *runtime.Scheme, owner v12.Object, object client.Object,
+	name, namespace string, forceUpdate bool) error {
+	return CreateOrUpdateRuntimeObject(kuberClient, scheme, owner, object, v12.ObjectMeta{Name: name, Namespace: namespace}, forceUpdate)
+}
+
+func CreateOrUpdateRuntimeObjectAndWait(kuberClient client.Client, scheme *runtime.Scheme, owner v12.Object,
+	object client.Object, meta v12.ObjectMeta, forceUpdate, waitResult bool) error {
 	// Set reference.
 	if owner != nil {
 		properObj := (object).(v12.Object)
@@ -133,8 +113,7 @@ func CreateOrUpdateRuntimeObject(kuberClient client.Client, scheme *runtime.Sche
 			return err
 		}
 	}
-	zeroObject := Zero(object)
-	emptyObject := (zeroObject).(client.Object)
+	emptyObject := Zero(object).(client.Object)
 	err := kuberClient.Get(context.TODO(), types.NamespacedName{
 		Name: meta.Name, Namespace: meta.Namespace,
 	}, emptyObject)
@@ -152,19 +131,23 @@ func CreateOrUpdateRuntimeObject(kuberClient client.Client, scheme *runtime.Sche
 					string(newJsonString)),
 			}
 		}
+
+		if waitResult {
+			return wait.PollImmediate(time.Second, time.Second*10, func() (bool, error) {
+				err := kuberClient.Get(context.TODO(), types.NamespacedName{
+					Name: meta.Name, Namespace: meta.Namespace,
+				}, emptyObject)
+
+				return err == nil, nil
+
+			})
+		}
 	} else {
 		if !reflect.DeepEqual(emptyObject, object) {
 			err = kuberClient.Update(context.TODO(), object)
 			if err != nil && forceUpdate {
-				var errJson error
-				existedObjectJsonString, errJson := json.MarshalIndent(emptyObject, "", "  ")
-				if errJson != nil {
-					existedObjectJsonString = []byte("Not able to parse object. Error: " + errJson.Error())
-				}
-				newJsonString, errJson := json.MarshalIndent(object, "", "  ")
-				if errJson != nil {
-					newJsonString = []byte("Not able to parse object. Error: " + errJson.Error())
-				}
+				existedObjectJsonString := objectToYaml(emptyObject)
+				newJsonString := objectToYaml(object)
 				return &ExecutionError{
 					Msg: fmt.Sprintf(
 						"Resource update is failed with the following message: %s\nExisted resource: %s\nNew resource: %s\n",
@@ -173,10 +156,52 @@ func CreateOrUpdateRuntimeObject(kuberClient client.Client, scheme *runtime.Sche
 						string(newJsonString)),
 				}
 			}
+
+			if waitResult {
+				return wait.PollImmediate(time.Second, time.Second*10, func() (bool, error) {
+					err := kuberClient.Get(context.TODO(), types.NamespacedName{
+						Name: meta.Name, Namespace: meta.Namespace,
+					}, emptyObject)
+
+					return DeepEqualIgnoreFields(emptyObject, object, "data", "spec"), err
+				})
+			}
+		}
+	}
+	return nil
+}
+
+func DeepEqualIgnoreFields(obj1, obj2 client.Object, fieldsToCompare ...string) bool {
+	// Convert the object to unstructured and remove specified fields
+	unstructuredObj1, _ := runtime.DefaultUnstructuredConverter.ToUnstructured(obj1)
+	unstructuredObj2, _ := runtime.DefaultUnstructuredConverter.ToUnstructured(obj2)
+
+	for _, field := range fieldsToCompare {
+		if v1, ok := unstructuredObj1[field]; ok {
+			if v2, ok := unstructuredObj2[field]; ok {
+				if !reflect.DeepEqual(v1, v2) {
+					return false
+				}
+			} else {
+				return false
+			}
+		} else if _, ok := unstructuredObj2[field]; !ok {
+			if _, ok := unstructuredObj1[field]; ok {
+				return false
+			}
 		}
 	}
 
-	return nil
+	return true
+}
+
+func objectToYaml(obj client.Object) string {
+	var errJson error
+	objStr, errJson := json.MarshalIndent(obj, "", "  ")
+	if errJson != nil {
+		objStr = []byte("Not able to parse object. Error: " + errJson.Error())
+	}
+	return string(objStr)
 }
 
 func Zero(x interface{}) interface{} {

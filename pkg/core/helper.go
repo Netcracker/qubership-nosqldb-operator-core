@@ -51,6 +51,8 @@ type KubernetesHelper interface {
 	DeleteRCAndPods(ssName string, namespace string, waitSeconds int) error
 	GetDeploymentTypeByPVC(ctx ExecutionContext, serviceName string, pvcSelector map[string]string) (MicroServiceDeployType, error)
 	ScaleDeployment(obj *v14.Deployment, replicas, timeout int) error
+	ScaleDeploymentByLabels(labels map[string]string, namespace string, replicas, timeout int) error
+	UpdateDeploymentByLabels(labels map[string]string, namespace string, updateFunc func(depl *v14.Deployment)) error
 	ScaleStatefulset(obj *v14.StatefulSet, replicas, timeout int) error
 	ScaleReplicationController(obj *v1.ReplicationController, replicas, timeout int) error
 	RestartPod(pod *v1.Pod, namespace string, waitSeconds int) error
@@ -110,7 +112,7 @@ func (r *DefaultKubernetesHelperImpl) ListPods(namespace string, labelSelectors 
 
 	listOps := []client.ListOption{
 		client.InNamespace(namespace),
-		client.MatchingLabelsSelector{labels.SelectorFromSet(labelSelectors)},
+		client.MatchingLabelsSelector{Selector: labels.SelectorFromSet(labelSelectors)},
 	}
 	err := r.Client.List(context.Background(), podList, listOps...)
 	if err != nil {
@@ -123,7 +125,7 @@ func (r *DefaultKubernetesHelperImpl) checkPodsCountByLabel(labelSelectors map[s
 	podList := &v1.PodList{}
 	listOps := []client.ListOption{
 		client.InNamespace(namespace),
-		client.MatchingLabelsSelector{labels.SelectorFromSet(labelSelectors)},
+		client.MatchingLabelsSelector{Selector: labels.SelectorFromSet(labelSelectors)},
 	}
 	if err := r.Client.List(context.Background(), podList, listOps...); err != nil {
 		if errors.IsNotFound(err) {
@@ -146,7 +148,7 @@ func (r *DefaultKubernetesHelperImpl) checkPodsByLabel(labelSelectors map[string
 
 	listOps := []client.ListOption{
 		client.InNamespace(namespace),
-		client.MatchingLabelsSelector{labels.SelectorFromSet(labelSelectors)},
+		client.MatchingLabelsSelector{Selector: labels.SelectorFromSet(labelSelectors)},
 	}
 	if err := r.Client.List(context.Background(), podList, listOps...); err != nil {
 		if errors.IsNotFound(err) {
@@ -347,7 +349,7 @@ func (r *DefaultKubernetesHelperImpl) ListRuntimeObjectsByLabels(list client.Obj
 	namespace string, labelSelectors map[string]string) error {
 	listOps := []client.ListOption{
 		client.InNamespace(namespace),
-		client.MatchingLabelsSelector{labels.SelectorFromSet(labelSelectors)},
+		client.MatchingLabelsSelector{Selector: labels.SelectorFromSet(labelSelectors)},
 	}
 
 	err := r.Client.List(context.Background(), list, listOps...)
@@ -496,6 +498,34 @@ func (r *DefaultKubernetesHelperImpl) ScaleDeployment(obj *v14.Deployment, repli
 	return r.scale(obj, replicas, timeout, obj.Spec.Template.Labels, obj.Spec.Template.Namespace)
 }
 
+func (r *DefaultKubernetesHelperImpl) ScaleDeploymentByLabels(labels map[string]string, namespace string, replicas, timeout int) error {
+	dl := &v14.DeploymentList{}
+	err := r.ListRuntimeObjectsByLabels(dl, namespace, labels)
+	if err != nil {
+		return err
+	}
+	if len(dl.Items) == 0 {
+		return NewNotFoundError(fmt.Sprintf("No deployment found by labels %v", labels))
+	}
+	return r.ScaleDeployment(&dl.Items[0], replicas, timeout)
+}
+
+func (r *DefaultKubernetesHelperImpl) UpdateDeploymentByLabels(labels map[string]string, namespace string, updateFunc func(depl *v14.Deployment)) error {
+	dl := &v14.DeploymentList{}
+
+	err := r.ListRuntimeObjectsByLabels(dl, namespace, labels)
+	if err != nil {
+		return err
+	}
+	if len(dl.Items) == 0 {
+		return NewNotFoundError(fmt.Sprintf("No deployment found by labels %v", labels))
+	}
+
+	updateFunc(&dl.Items[0])
+
+	return r.Client.Update(context.TODO(), &dl.Items[0], &client.UpdateOptions{})
+}
+
 func (r *DefaultKubernetesHelperImpl) ScaleStatefulset(obj *v14.StatefulSet, replicas, timeout int) error {
 	rep := int32(replicas)
 	obj.Spec.Replicas = &rep
@@ -559,8 +589,7 @@ func ListRuntimeObjectsByNamespace(list client.ObjectList, cl client.Client, nam
 	return nil
 }
 
-func ReadSecret(ctx ExecutionContext, name string, namespace string) (*v1.Secret, error) {
-	kubeClient := ctx.Get(constants.ContextClient).(client.Client)
+func ReadSecret(kubeClient client.Client, name string, namespace string) (*v1.Secret, error) {
 	secret := &v1.Secret{}
 	err := kubeClient.Get(context.TODO(),
 		types.NamespacedName{Name: name, Namespace: namespace}, secret)
@@ -575,7 +604,7 @@ func CompareSpecToCM(ctx ExecutionContext, cfgTemplate *v1.ConfigMap, spec inter
 
 	jsonBytes, jsonErr := json.Marshal(spec)
 	if jsonErr != nil {
-		log.Info("some problems with jsonErr")
+		log.Info(fmt.Sprintf("Failed to marshal spec to JSON, error: %v", jsonErr))
 	}
 
 	specHash := sha256.Sum256(jsonBytes)
@@ -601,19 +630,15 @@ func CompareSpecToCM(ctx ExecutionContext, cfgTemplate *v1.ConfigMap, spec inter
 	}
 }
 
-func HasSpecChanged(ctx ExecutionContext,
-	checkChanges func(cfgTemplate *v1.ConfigMap) bool) (bool, error) {
-
+func GetSpecConfigMap(ctx ExecutionContext) *v1.ConfigMap {
 	request := ctx.Get(constants.ContextRequest).(reconcile.Request)
 	log := ctx.Get(constants.ContextLogger).(*zap.Logger)
 	client := ctx.Get(constants.ContextClient).(client.Client)
-	scheme := ctx.Get(constants.ContextSchema).(*runtime.Scheme)
-	resultCheck := false
-
+	contextHashConfigMap := ctx.Get(constants.ContextHashConfigMap).(string)
 	cm := &v1.ConfigMap{
 		ObjectMeta: v12.ObjectMeta{
 			Namespace: request.Namespace,
-			Name:      constants.LastApplliedName,
+			Name:      contextHashConfigMap,
 		},
 	}
 	err := client.Get(context.TODO(), types.NamespacedName{
@@ -621,19 +646,60 @@ func HasSpecChanged(ctx ExecutionContext,
 	}, cm)
 
 	if err != nil && !errors.IsNotFound(err) {
-		log.Error("Some problem reading configmap")
-		return false, nil
+		log.Error(fmt.Sprintf("Failed to get config map %s", contextHashConfigMap))
+		panic(err)
 	}
 
-	resultCheck = checkChanges(cm)
+	return cm
+}
 
-	err = CreateOrUpdateRuntimeObject(
+func DeleteSpecConfigMap(ctx ExecutionContext) error {
+	request := ctx.Get(constants.ContextRequest).(reconcile.Request)
+	client := ctx.Get(constants.ContextClient).(client.Client)
+	contextHashConfigMap := ctx.Get(constants.ContextHashConfigMap).(string)
+	cm := &v1.ConfigMap{
+		ObjectMeta: v12.ObjectMeta{
+			Namespace: request.Namespace,
+			Name:      contextHashConfigMap,
+		},
+	}
+
+	return DeleteRuntimeObjectWithCheck(client, cm, 60)
+}
+
+func UpdateSpecConfigMap(ctx ExecutionContext, cm *v1.ConfigMap) error {
+	client := ctx.Get(constants.ContextClient).(client.Client)
+	scheme := ctx.Get(constants.ContextSchema).(*runtime.Scheme)
+
+	err := CreateOrUpdateRuntimeObject(
 		client,
 		scheme,
 		nil,
 		cm,
 		cm.ObjectMeta,
 		true)
+
+	return err
+}
+
+func HasSpecChanged(ctx ExecutionContext, checkChanges func(cfgTemplate *v1.ConfigMap) bool) (bool, error) {
+	log := ctx.Get(constants.ContextLogger).(*zap.Logger)
+	kubeClient := ctx.Get(constants.ContextClient).(client.Client)
+	scheme := ctx.Get(constants.ContextSchema).(*runtime.Scheme)
+	spec := ctx.Get(constants.ContextSpec).(client.Object)
+	resultCheck := false
+
+	cm := GetSpecConfigMap(ctx)
+
+	resultCheck = checkChanges(cm)
+
+	err := CreateOrUpdateRuntimeObjectAndWait(
+		kubeClient,
+		scheme,
+		spec,
+		cm,
+		cm.ObjectMeta,
+		true, true)
 	if err != nil {
 		log.Info("Can't store last reconcilation CR version. Error: " + err.Error())
 	}
@@ -645,4 +711,40 @@ func CheckSpecChange(ctx ExecutionContext, spec interface{}, serviceName string)
 	return HasSpecChanged(ctx, func(cfgTemplate *v1.ConfigMap) bool {
 		return CompareSpecToCM(ctx, cfgTemplate, spec, serviceName)
 	})
+}
+
+func DeleteRuntimeObjectWithCheck(cl client.Client, object client.Object, checkTimeout int) error {
+	err := DeleteRuntimeObject(cl, object)
+
+	if errors.IsNotFound(err) {
+		return nil
+	}
+
+	zeroObject := Zero(object)
+	emptyObject := (zeroObject).(client.Object)
+	return wait.PollImmediate(time.Second, time.Second*time.Duration(checkTimeout), func() (done bool, err error) {
+		err = cl.Get(context.TODO(), types.NamespacedName{
+			Name: object.GetName(), Namespace: object.GetNamespace(),
+		}, emptyObject)
+
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return true, nil
+			} else {
+				return false, err
+			}
+		}
+
+		return false, nil
+	})
+}
+
+// TODO looks like it should be in helper
+func DeleteRuntimeObject(client client.Client, object client.Object) error {
+	err := client.Delete(context.TODO(), object)
+	if err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+
+	return nil
 }

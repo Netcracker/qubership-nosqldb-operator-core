@@ -2,9 +2,12 @@ package fiber
 
 import (
 	"context"
-	"github.com/gofiber/fiber/v2"
+	"fmt"
 	"log"
 	"strconv"
+	"sync"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 type FiberServiceError struct {
@@ -24,10 +27,23 @@ func (r *FiberServerExists) Error() string {
 	return r.Msg
 }
 
+var once sync.Once
+var fiberService FiberService
+
+func GetFiberService() *FiberService {
+	once.Do(func() {
+		log.Print("Intantiate fiberService in singleton")
+		fiberService = &FiberServiceImpl{servers: sync.Map{}}
+	})
+	return &fiberService
+}
+
 type FiberService interface {
 	Create(port int, setUp func(app *fiber.App, ctx context.Context) error, forceShutdown ...bool) error
+	CreateTLS(port int, crtPath string, keyPath string, isTLSEnabled bool, setUp func(app *fiber.App, ctx context.Context) error, forceShutdown ...bool) error
 	Shutdown(port int) error
 	CheckServerExists(port int) bool
+	createFiberServer(port int, crtPath string, keyPath string, isTLSEnabled bool, setUp func(app *fiber.App, ctx context.Context) error, forceShutdown ...bool) error
 }
 
 type FiberServiceInternal interface {
@@ -35,34 +51,73 @@ type FiberServiceInternal interface {
 	ShutdownAll() []error
 }
 
-type fiberServiceElement struct {
-	Server     *fiber.App
-	Context    context.Context
-	CancelFunc context.CancelFunc
-}
-
-var _ FiberServiceInternal = &FiberServiceImpl{
-	serversList: map[int]*fiberServiceElement{},
+type fiberServer struct {
+	Server  *fiber.App
+	Context context.Context
+	Cancel  context.CancelFunc
 }
 
 type FiberServiceImpl struct {
-	serversList map[int]*fiberServiceElement
+	servers sync.Map
 }
 
-//TODO debug logs to find where stuck
-func (f FiberServiceImpl) Create(port int, setUp func(app *fiber.App, ctx context.Context) error, forceShutdown ...bool) error {
+// TODO debug logs to find where stuck
+func (f *FiberServiceImpl) Create(port int, setUp func(app *fiber.App, ctx context.Context) error, forceShutdown ...bool) error {
+	return f.createFiberServer(port, "", "", false, setUp, forceShutdown...)
+}
+
+func (f *FiberServiceImpl) Shutdown(port int) error {
+	if server, ok := f.servers.Load(port); ok {
+		server.(*fiberServer).Server.Shutdown()
+		server.(*fiberServer).Cancel()
+		f.servers.Delete(port)
+		return nil
+	}
+	return fmt.Errorf("server not found on port %d", port)
+}
+
+func (f *FiberServiceImpl) CheckServerExists(port int) bool {
+	if _, ok := f.servers.Load(port); ok {
+		return true
+	}
+	return false
+}
+
+func (f *FiberServiceImpl) ShutdownAll() []error {
+	var errs []error
+	if isSyncMapEmpty(&f.servers) {
+		return nil
+	}
+	f.servers.Range(func(key, value any) bool {
+		err := value.(*fiberServer).Server.Shutdown()
+		value.(*fiberServer).Cancel()
+		if err != nil {
+			errs = append(errs, err)
+		}
+		return true
+	})
+
+	return errs
+}
+
+func (f *FiberServiceImpl) CreateTLS(port int, crtPath string, keyPath string, isTLSEnabled bool, setUp func(app *fiber.App, ctx context.Context) error, forceShutdown ...bool) error {
+	return f.createFiberServer(port, crtPath, keyPath, isTLSEnabled, setUp, forceShutdown...)
+}
+
+func (f *FiberServiceImpl) createFiberServer(port int, crtPath string, keyPath string, isTLSEnabled bool, setUp func(app *fiber.App, ctx context.Context) error, forceShutdown ...bool) error {
 	log.Print("Starting to create new fiber server")
-	if f.serversList[port] != nil {
+	if f.CheckServerExists(port) {
+		log.Printf("Stopping server on port %d", port)
 		if len(forceShutdown) > 0 && forceShutdown[0] {
-			log.Printf("Stopping currently runnin server on port %d", port)
-			sdErr := f.Shutdown(port)
-			if sdErr != nil {
-				return sdErr
+			err := f.Shutdown(port)
+			if err != nil {
+				return err
 			}
 		} else {
 			return &FiberServerExists{Msg: "Server on " + strconv.Itoa(port) + " port already presented"}
 		}
 	}
+
 	log.Print("No running servers left, create a new one")
 	serverCtx, cancel := context.WithCancel(context.Background())
 	app := fiber.New()
@@ -75,79 +130,34 @@ func (f FiberServiceImpl) Create(port int, setUp func(app *fiber.App, ctx contex
 
 	log.Print("Calling new go routin")
 	go func() {
-		if err := app.Listen(":" + strconv.Itoa(port)); err != nil {
+		var err error
+		if isTLSEnabled {
+			err = app.ListenTLS(":"+strconv.Itoa(port), crtPath, keyPath)
+		} else {
+			err = app.Listen(":" + strconv.Itoa(port))
+		}
+		if err != nil {
 			log.Printf("Error during go routin start %v", err)
 			cancel()
-			delete(f.serversList, port)
+			f.Shutdown(port)
 			log.Printf("Server on %v port is failed and removed from servers list: %+v", port, err)
 		}
 	}()
 
-	f.serversList[port] = &fiberServiceElement{
-		Server:     app,
-		Context:    serverCtx,
-		CancelFunc: cancel,
-	}
+	f.servers.Store(port, &fiberServer{
+		Server:  app,
+		Context: serverCtx,
+		Cancel:  cancel,
+	})
 
 	return nil
 }
 
-func (f FiberServiceImpl) Shutdown(port int) error {
-	if f.serversList[port] == nil {
-		return &FiberServiceError{Msg: "Server on " + strconv.Itoa(port) + " port not found"}
-	}
-	err := f.serversList[port].Server.Shutdown()
-	f.serversList[port].CancelFunc()
-	delete(f.serversList, port)
-	return err
-}
-
-func (f FiberServiceImpl) CheckServerExists(port int) bool {
-	return f.serversList[port] != nil
-}
-
-func (f FiberServiceImpl) ShutdownAll() []error {
-	var errs []error
-	for _, server := range f.serversList {
-		err := server.Server.Shutdown()
-		server.CancelFunc()
-		if err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errs
-}
-
-type FiberServiceFactory interface {
-	GetInstance() FiberService
-	SetInstance(fs FiberServiceInternal) []error
-}
-
-type FiberServiceFactoryImpl struct {
-	instance FiberServiceInternal
-}
-
-func (f FiberServiceFactoryImpl) GetInstance() FiberService {
-	return f.instance
-}
-
-func (f FiberServiceFactoryImpl) SetInstance(fs FiberServiceInternal) []error {
-	// During instance change, make sure no any other server left
-	var errs []error
-	if f.instance != nil {
-		errs = f.instance.ShutdownAll()
-	}
-	f.instance = fs
-	return errs
-}
-
-// Set another instance of fiber service for tests
-var fsf FiberServiceFactory = &FiberServiceFactoryImpl{
-	&FiberServiceImpl{
-		serversList: map[int]*fiberServiceElement{},
-	},
-}
-
-func GetFiberServiceFactory() FiberServiceFactory {
-	return fsf
+func isSyncMapEmpty(m *sync.Map) bool {
+	isEmpty := true
+	m.Range(func(_, _ interface{}) bool {
+		isEmpty = false
+		return false // stop iterating
+	})
+	return isEmpty
 }
