@@ -14,6 +14,8 @@ const ContextConsul = "contextConsul"
 const ContextConsulServiceRegistrations = "contextConsulServiceRegistrations"
 const ContextConsulRegistration = "contextConsulRegistration"
 
+const ContextHashConfigMap = "contextHashConfigMap"
+
 const ContextServiceDeployType = "contextServiceDeployType"
 
 const LastApplliedName = "last-applied-configuration-info"
