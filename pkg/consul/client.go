@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/constants"
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/types"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/types"
 	consulApi "github.com/hashicorp/consul/api"
 	"go.uber.org/zap"
 	"k8s.io/client-go/rest"

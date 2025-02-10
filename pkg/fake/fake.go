@@ -3,9 +3,9 @@ package fake
 import (
 	"fmt"
 
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/constants"
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/core"
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/steps"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/core"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/steps"
 	"go.uber.org/zap"
 	v12 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"

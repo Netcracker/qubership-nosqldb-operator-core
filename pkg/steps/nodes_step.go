@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/constants"
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/core"
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/types"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/core"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/types"
 	"go.uber.org/zap"
 	v1core "k8s.io/api/core/v1"
 	kTypes "k8s.io/apimachinery/pkg/types"

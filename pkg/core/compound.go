@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/constants"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
 	"go.uber.org/zap"
 )
 

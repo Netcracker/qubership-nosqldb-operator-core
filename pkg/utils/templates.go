@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/constants"
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/types"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/types"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

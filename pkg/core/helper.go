@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/constants"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
 	"go.uber.org/zap"
 	v14 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"

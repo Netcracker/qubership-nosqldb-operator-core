@@ -3,10 +3,10 @@ package steps
 import (
 	"fmt"
 
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/constants"
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/core"
-	mTypes "github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/types"
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/vault"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/core"
+	mTypes "github.com/Netcracker/qubership-nosqldb-operator-core/pkg/types"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/vault"
 	"go.uber.org/zap"
 )
 

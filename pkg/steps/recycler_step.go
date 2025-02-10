@@ -3,9 +3,9 @@ package steps
 import (
 	"fmt"
 
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/constants"
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/core"
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/utils"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/core"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/utils"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	v12 "k8s.io/api/core/v1"

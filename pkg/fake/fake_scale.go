@@ -1,8 +1,8 @@
 package fake
 
 import (
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/constants"
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/core"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/core"
 
 	"go.uber.org/zap"
 	v12 "k8s.io/api/apps/v1"

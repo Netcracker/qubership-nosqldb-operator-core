@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	constants "github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/constants"
-	"github.com/Netcracker/base/qubership-nosqldb-operator-core/pkg/utils"
+	constants "github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
+	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/utils"
 	v1 "k8s.io/api/core/v1"
 )
 
