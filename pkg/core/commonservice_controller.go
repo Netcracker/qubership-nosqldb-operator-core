@@ -2,19 +2,22 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"runtime/debug"
-	"strings"
 	"time"
 
+	"github.com/Netcracker/qubership-credential-manager/pkg/informer"
+	"github.com/Netcracker/qubership-credential-manager/pkg/manager"
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/consul"
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/types"
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/vault"
-	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -25,6 +28,7 @@ type CommonReconciler interface {
 	UpdateDRStatus(drStatus types.DisasterRecoveryStatus)
 	GetStatus() *types.ServiceStatusCondition
 	GetSpec() interface{}
+	GetConfigMapName() string
 	SetServiceInstance(client client.Client, request reconcile.Request)
 	GetInstance() client.Object
 	GetDeploymentVersion() string
@@ -32,6 +36,9 @@ type CommonReconciler interface {
 	GetConsulRegistration() *types.ConsulRegistration
 	GetConsulServiceRegistrations() map[string]*types.AgentServiceRegistration
 	GetMessage() string
+	UpdatePassword() Executable
+	GetAdminSecretName() string
+	UpdatePassWithFullReconcile() bool
 }
 
 type DefaultCommonReconciler struct {
@@ -52,11 +59,19 @@ type ReconcileCommonService struct {
 	Reconciler       CommonReconciler
 }
 
-func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcile.Request) (result reconcile.Result, executionErrResult error) {
+func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcile.Request) (result reconcile.Result, reconcileError error) {
 	logger := GetLogger(getEnvAsBool("DEBUG_LOG", true))
+
+	crHandler := DefaultCRStatusHandler{
+		Reconciler: r.Reconciler,
+		KubeClient: r.Client,
+	}
 
 	var consulClient consul.ConsulClient
 	var consulErr error
+
+	//we always return error == nil, this way we implement our own logic of reconcile retries
+	var executionErrResult error
 
 	defer func() {
 		panicStackTrace := string(debug.Stack())
@@ -70,7 +85,10 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 			case error:
 				var dre *DRExecutionError
 				if errors.As(err.(error), &dre) {
-					updateDRStatus(r.Reconciler, r.Client, "failed")
+					statusErr := crHandler.SetDRStatus("failed").Commit()
+					if statusErr != nil {
+						logger.Sugar().Errorf("Failed to update DR status to 'failed', err: %v", statusErr)
+					}
 					logger.Error(v.Error() + "\n" + panicStackTrace)
 					return
 				}
@@ -87,14 +105,13 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 			resultMsg := "Reconciliation exception: " + errMsg
 			logger.Error(resultMsg)
 			executionErrResult = &ExecutionError{Msg: resultMsg}
-			updateInstanceStatus(r.Reconciler, r.Client, true, "Failed", executionErrResult, "ReconcileCycleFailed")
-			updateDRStatus(r.Reconciler, r.Client, "failed")
+
+			statusErr := crHandler.SetCRCondition(true, "Failed", executionErrResult, "ReconcileCycleFailed").SetDRStatus("failed").Commit()
+			if statusErr != nil {
+				logger.Sugar().Errorf("Failed to update CR status, err: %v", statusErr)
+			}
 		}
 
-		//if consulClient != nil {
-		//	consulLogoutErr := consulClient.Logout()
-		//	HandleError(consulLogoutErr, logger.Warn, "Consul client failed to logout")
-		//}
 	}()
 
 	r.Reconciler.SetServiceInstance(r.Client, request)
@@ -108,15 +125,17 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 		constants.ContextVault:                      vault.NewVaulterHelperImpl(vault.NewVaultClientImpl(r.Reconciler.GetVaultRegistration())),
 		constants.ContextConsulRegistration:         r.Reconciler.GetConsulRegistration(),
 		constants.ContextConsulServiceRegistrations: r.Reconciler.GetConsulServiceRegistrations(),
+		constants.ContextHashConfigMap:              r.Reconciler.GetConfigMapName(),
 	})
 
 	deploymentVersion := getEnv("DEPLOYMENT_VERSION", "")
+	sleepTime := getEnvAsInt("DEPLOYMENT_VERSION_MISMATCH_SLEEP_SECONDS", 5*60)
 
 	if deploymentVersion != "" {
 		crDeploymentVersion := r.Reconciler.GetDeploymentVersion()
 		logger.Debug(fmt.Sprintf("Stored deployment version: %s . Current CR deployment version: %s", deploymentVersion, crDeploymentVersion))
 		if deploymentVersion != crDeploymentVersion {
-			sleepTime := getEnvAsInt("DEPLOYMENT_VERSION_MISMATCH_SLEEP_SECONDS", 5*60)
+
 			logger.Info(fmt.Sprintf("Deployment version mismatch. Sleeping for %v seconds and exit...", sleepTime))
 			time.Sleep(time.Duration(sleepTime) * time.Second)
 			os.Exit(0)
@@ -129,16 +148,81 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
 
+	// deploymentVersionChanged, _ := CheckSpecChange(deploymentContext, deploymentVersion, "deploymentVersion")
 	specHasChanges, specCheckErr := CheckSpecChange(deploymentContext, r.Reconciler.GetSpec(), "spec-summary")
 
 	if specCheckErr != nil {
 		logger.Warn("CR Spec Hash checking error: " + specCheckErr.Error())
 	}
 
-	if !specHasChanges && !isCurrentStatus(r.Reconciler, "Successful") {
-		logger.Debug("Spec has no changes and current status is not Successful")
-		logger.Debug(fmt.Sprintf("Message: %s", r.Reconciler.GetMessage()))
-		return
+	adminSecret := r.Reconciler.GetAdminSecretName()
+	if adminSecret != "" {
+		err := informer.Watch([]string{r.Reconciler.GetAdminSecretName()}, func() {
+
+			if r.Reconciler.UpdatePassWithFullReconcile() {
+
+				err := wait.PollUntilContextTimeout(context.Background(), time.Second, time.Duration(sleepTime)*time.Second, true,
+					func(ctx context.Context) (done bool, err error) {
+						changed, err := manager.AreCredsChanged([]string{r.Reconciler.GetAdminSecretName()})
+						return !changed && err == nil, nil
+					})
+
+				if err != nil {
+					logger.Error(fmt.Sprintf("Failed to wait secret and secret old is identical, err: %v", err))
+				}
+
+				resetErr := doResetSpec(deploymentContext)
+				if resetErr != nil {
+					logger.Error(fmt.Sprintf("Failed to reset spec config map, err: %v", resetErr))
+				}
+				r.Reconcile(ctx, request)
+			} else {
+				updateErr := r.Reconciler.UpdatePassword().Execute(deploymentContext)
+				if updateErr != nil {
+					logger.Error(fmt.Sprintf("Failed to update password, err: %v", updateErr))
+				} else {
+					logger.Info("Password updated")
+				}
+			}
+		})
+
+		if err != nil {
+			return reconcile.Result{RequeueAfter: time.Minute}, err
+		}
+
+		areCredsChanged, _ := manager.AreCredsChanged([]string{r.Reconciler.GetAdminSecretName()})
+
+		if areCredsChanged {
+			specHasChanges = true
+		} else {
+			// no changes in secret - need to unlock secret
+			err := manager.ActualizeCreds(r.Reconciler.GetAdminSecretName(), func(newSecret, oldSecret *v1.Secret) error {
+				return nil
+			})
+
+			if err != nil {
+				logger.Error(fmt.Sprintf("Failed to actualize secret %s, err: %v", r.Reconciler.GetAdminSecretName(), err))
+			}
+		}
+
+	}
+
+	if specHasChanges && !isCurrentStatus(r.Reconciler, "Successful") {
+		logger.Info(fmt.Sprintf(`Looks like the last deploy has failed and this is a new one. 
+			Continue with deleted %v config map to run full reconcile.`, r.Reconciler.GetConfigMapName()))
+
+		if r.Reconciler.GetMessage() != "" {
+			// logger.Info(fmt.Sprintf("Message: %s", r.Reconciler.GetMessage()))
+		}
+
+		out, _ := json.Marshal(r.Reconciler.GetSpec())
+		logger.Info(fmt.Sprintf("CR:\n%s", string(out)))
+
+		reconcileError = doResetSpec(deploymentContext)
+		CheckSpecChange(deploymentContext, r.Reconciler.GetSpec(), "spec-summary")
+		if reconcileError != nil {
+			return
+		}
 	}
 
 	deploymentContext.Set(constants.ContextSpecHasChanges, specHasChanges)
@@ -152,8 +236,10 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 	}
 
 	if specHasChanges && executionErrResult == nil {
-		updateInstanceStatus(r.Reconciler, r.Client, true, "In Progress", nil, "ReconcileCycleInProgress")
-		updateDRStatus(r.Reconciler, r.Client, "running")
+		statusErr := crHandler.SetCRCondition(true, "In Progress", nil, "ReconcileCycleInProgress").SetDRStatus("running").Commit()
+		if statusErr != nil {
+			logger.Sugar().Errorf("Failed to update CR status, err: %v", statusErr)
+		}
 
 		nodeIP := getEnv("HOST_IP", "")
 		//consulClient, consulErr = consul.NewConsulClientImpl(nodeIP, request.Namespace, r.Reconciler.GetConsulRegistration(), r.KubeConfig, logger)
@@ -169,56 +255,25 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 		executionErrResult = r.Executor.Execute(deploymentContext)
 		if executionErrResult == nil {
 			// Update last success execution version
-			updateInstanceStatus(r.Reconciler, r.Client, true, "Successful", nil, "ReconcileCycleSucceeded")
+			statusErr := crHandler.SetCRCondition(true, "Successful", nil, "ReconcileCycleSucceeded").Commit()
+			if statusErr != nil {
+				logger.Sugar().Errorf("Failed to update CR status, err: %v", statusErr)
+			}
 			logger.Info("Reconcile cycle succeeded")
 
 			if r.DRBuilder != nil {
 				r.Executor.SetExecutable(r.DRBuilder.Build(deploymentContext))
 				executionErrResult = r.Executor.Execute(deploymentContext)
-				updateDRStatus(r.Reconciler, r.Client, "done")
+
+				statusErr := crHandler.SetDRStatus("done").Commit()
+				if statusErr != nil {
+					logger.Sugar().Errorf("Failed to update CR status, err: %v", statusErr)
+				}
 			}
 		}
 
 	}
-
 	return
-}
-
-func updateInstanceStatus(reconciler CommonReconciler, client client.Client, conditionStatus bool, statusType string, err error, reason string) {
-	transitionTime := v12.Time{Time: time.Now()}
-	conditionMsg := ""
-
-	if err != nil {
-		conditionMsg = err.Error()
-	}
-
-	condition := types.ServiceStatusCondition{
-		Type:               statusType,
-		Status:             conditionStatus,
-		LastTransitionTime: transitionTime,
-		Reason:             reason,
-		Message:            strings.ReplaceAll(conditionMsg, "\t", " "),
-	}
-	reconciler.UpdateStatus(condition)
-
-	conditionUpdateErr := client.Status().Update(context.TODO(), reconciler.GetInstance())
-	if conditionUpdateErr != nil {
-		logger := GetLogger(getEnvAsBool("DEBUG_LOG", true))
-		logger.Error("Cannot update CR conditions. Error: " + conditionUpdateErr.Error())
-	}
-}
-
-func updateDRStatus(reconciler CommonReconciler, client client.Client, status string) {
-	drStatus := types.DisasterRecoveryStatus{
-		Status: status,
-	}
-	reconciler.UpdateDRStatus(drStatus)
-	//TODO DR cleanup
-	drStatusUpdateErr := client.Status().Update(context.TODO(), reconciler.GetInstance())
-	if drStatusUpdateErr != nil {
-		logger := GetLogger(getEnvAsBool("DEBUG_LOG", true))
-		logger.Error("Cannot update DR Status. Error: " + drStatusUpdateErr.Error())
-	}
 }
 
 func isCurrentStatus(reconciler CommonReconciler, statusType string) bool {
@@ -228,4 +283,13 @@ func isCurrentStatus(reconciler CommonReconciler, statusType string) bool {
 	}
 
 	return false
+}
+
+func doResetSpec(deploymentContext ExecutionContext) error {
+	err := DeleteSpecConfigMap(deploymentContext)
+	if err != nil {
+		return fmt.Errorf("Failed to delete Spec config map, err: %w", err)
+	}
+
+	return nil
 }

@@ -1,20 +1,21 @@
 module github.com/Netcracker/qubership-nosqldb-operator-core
 
-go 1.22.0
+go 1.22.5
 
 toolchain go1.23.2
 
 require (
+	github.com/Netcracker/qubership-credential-manager v0.0.3
 	github.com/docker/distribution v2.7.1+incompatible
 	github.com/gofiber/fiber/v2 v2.35.0
 	github.com/hashicorp/consul/api v1.11.0
 	github.com/stretchr/testify v1.8.4
-	go.uber.org/zap v1.21.0
+	go.uber.org/zap v1.27.0
 	gotest.tools v2.2.0+incompatible
 	k8s.io/api v0.30.1
 	k8s.io/apimachinery v0.30.1
 	k8s.io/client-go v0.30.1
-	sigs.k8s.io/controller-runtime v0.13.0
+	sigs.k8s.io/controller-runtime v0.14.1
 )
 
 require (
@@ -72,14 +73,13 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.38.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect
-	go.uber.org/atomic v1.9.0 // indirect
-	go.uber.org/multierr v1.6.0 // indirect
-	golang.org/x/crypto v0.21.0 // indirect
-	golang.org/x/net v0.23.0 // indirect
+	go.uber.org/multierr v1.10.0 // indirect
+	golang.org/x/crypto v0.31.0 // indirect
+	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/oauth2 v0.10.0 // indirect
-	golang.org/x/sys v0.18.0 // indirect
-	golang.org/x/term v0.18.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/term v0.27.0 // indirect
+	golang.org/x/text v0.21.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
@@ -101,5 +101,7 @@ require (
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
+	github.com/imdario/mergo v0.3.6 // indirect
 	github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f // indirect
+	github.com/spf13/pflag v1.0.5 // indirect
 )
