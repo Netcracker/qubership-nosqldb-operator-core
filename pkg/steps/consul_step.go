@@ -152,7 +152,9 @@ func NewRegisterConsulServiceStep(
 			servicesList := &v1.ServiceList{}
 			listOps := []kubeClient.ListOption{
 				kubeClient.InNamespace(request.Namespace),
-				kubeClient.MatchingLabelsSelector{labels.SelectorFromSet(serviceLabels)},
+				kubeClient.MatchingLabelsSelector{
+					Selector: labels.SelectorFromSet(serviceLabels),
+				},
 			}
 
 			if err := kubeCl.List(context.Background(), servicesList, listOps...); err != nil {
