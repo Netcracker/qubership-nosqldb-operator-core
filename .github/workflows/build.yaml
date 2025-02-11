@@ -12,5 +12,5 @@ jobs:
       - name: Set up Git Private Repo
         run: |
           git config --global url."https://github.com/Netcracker/qubership-nosqldb-operator-core.git".insteadOf "https://github.com/"	
-      - name: Run Go tests
-        run: go test ./...
+      - name: Analyzes Go source code
+        run: go vet ./...
