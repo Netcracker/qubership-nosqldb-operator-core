@@ -208,7 +208,7 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 	}
 
 	if specHasChanges && !isCurrentStatus(r.Reconciler, "Successful") {
-		logger.Info(fmt.Sprintf(`Looks like the last deploy has failed and this is a new one. 
+		logger.Info(fmt.Sprintf(`Looks like the last deploy has failed and this is a new one.
 			Continue with deleted %v config map to run full reconcile.`, r.Reconciler.GetConfigMapName()))
 
 		if r.Reconciler.GetMessage() != "" {
@@ -235,10 +235,32 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 		logger.Info("Pre-deploy is finished")
 	}
 
+	if !specHasChanges && executionErrResult == nil {
+		// if statusErr := crHandler.
+		// 	SetCRCondition(true, "Successful", nil, "ReconcileNoChanges").
+		// 	Commit(); statusErr != nil {
+		// 	logger.Sugar().Errorf("Failed to update CR status, err: %v", statusErr)
+		// }
+		// return reconcile.Result{}, nil
+		logger.Info("No spec changes detected, finalizing CR as Successful to clear stale In Progress")
+		if statusErr := crHandler.
+			SetCRCondition(true, "Successful", nil, "ReconcileNoChanges").
+			Commit(); statusErr != nil {
+			logger.Sugar().Errorf("Failed to update CR status, err: %v", statusErr)
+		} else {
+			logger.Info("CR status updated to Successful (reason: ReconcileNoChanges)")
+		}
+		return reconcile.Result{}, nil
+	}
+
 	if specHasChanges && executionErrResult == nil {
+		logger.Info("Spec has changes, setting CR status to In Progress")
+
 		statusErr := crHandler.SetCRCondition(true, "In Progress", nil, "ReconcileCycleInProgress").SetDRStatus("running").Commit()
 		if statusErr != nil {
 			logger.Sugar().Errorf("Failed to update CR status, err: %v", statusErr)
+		} else {
+			logger.Info("CR status updated to In Progress (reason: ReconcileCycleInProgress)")
 		}
 
 		nodeIP := getEnv("HOST_IP", "")
