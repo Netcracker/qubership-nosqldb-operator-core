@@ -21,6 +21,8 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"go.uber.org/zap"
+
 )
 
 type CommonReconciler interface {
@@ -206,7 +208,10 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 		}
 
 	}
-
+	logger.Info("Spec change check",
+		zap.Bool("specHasChanges", specHasChanges),
+		zap.Any("currentStatus", r.Reconciler.GetStatus()),
+	)
 	if specHasChanges && !isCurrentStatus(r.Reconciler, "Successful") {
 		logger.Info(fmt.Sprintf(`Looks like the last deploy has failed and this is a new one.
 			Continue with deleted %v config map to run full reconcile.`, r.Reconciler.GetConfigMapName()))
