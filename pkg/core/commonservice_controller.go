@@ -208,7 +208,7 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 	}
 
 	if specHasChanges && !isCurrentStatus(r.Reconciler, "Successful") {
-		logger.Info(fmt.Sprintf(`Looks like the last deploy has failed and this is a new one. 
+		logger.Info(fmt.Sprintf(`Looks like the last deploy has failed and this is a new one.
 			Continue with deleted %v config map to run full reconcile.`, r.Reconciler.GetConfigMapName()))
 
 		if r.Reconciler.GetMessage() != "" {
@@ -233,6 +233,18 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 		//error will be catched by defer above
 		executionErrResult = r.Executor.Execute(deploymentContext)
 		logger.Info("Pre-deploy is finished")
+	}
+
+	if !specHasChanges && executionErrResult == nil {
+		logger.Info("No spec changes detected, finalizing CR as Successful to clear stale In Progress")
+		if statusErr := crHandler.
+			SetCRCondition(true, "Successful", nil, "ReconcileNoChanges").
+			Commit(); statusErr != nil {
+			logger.Sugar().Errorf("Failed to update CR status, err: %v", statusErr)
+		} else {
+			logger.Info("CR status updated to Successful (reason: ReconcileNoChanges)")
+		}
+		return reconcile.Result{}, nil
 	}
 
 	if specHasChanges && executionErrResult == nil {
