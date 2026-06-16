@@ -9,11 +9,7 @@ import (
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/core"
 	mFake "github.com/Netcracker/qubership-nosqldb-operator-core/pkg/fake"
 	mTypes "github.com/Netcracker/qubership-nosqldb-operator-core/pkg/types"
-	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/vault"
-	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/vault/mocks"
 	"github.com/docker/distribution/uuid"
-	"github.com/hashicorp/vault/api"
-	"github.com/stretchr/testify/mock"
 	"go.uber.org/zap"
 	"gotest.tools/assert"
 	v1apps "k8s.io/api/apps/v1"
@@ -27,39 +23,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
-
-type Vaulter interface {
-	VaultGetToken() string
-	GetClient() *api.Client
-	VaultGeneratePasswordWithPolicy(policyName string, client *api.Client) (string, error)
-	VaultCreatePasswordPolicy(policyName string, policy string, client *api.Client) error
-	VaultWrite(path string, secret map[string]interface{}, client *api.Client) error
-	VaultRead(path string, client *api.Client) (map[string]interface{}, error)
-}
-
-type FakeVaultImpl struct {
-	t        *testing.T
-	password string
-}
-
-func (r *FakeVaultImpl) GetClient() *api.Client {
-	return nil
-}
-
-func (r *FakeVaultImpl) VaultGeneratePasswordWithPolicy(policyName string, client *api.Client) (string, error) {
-	return r.password, nil
-}
-
-func (r *FakeVaultImpl) VaultCreatePasswordPolicy(policyName string, policy string, client *api.Client) error {
-	return nil
-}
-func (r *FakeVaultImpl) VaultRead(path string, client *api.Client) (map[string]interface{}, error) {
-	return nil, nil
-}
-
-func (r *FakeVaultImpl) VaultWrite(path string, secret map[string]interface{}, client *api.Client) error {
-	return nil
-}
 
 type TestUtilsImpl struct {
 	core.DefaultKubernetesHelperImpl
@@ -202,11 +165,6 @@ func GenerateDefaultFake(namespace string, fakePvName []string, fakeNodeLabels [
 			PodSecurityContext: &v1core.PodSecurityContext{
 				FSGroup: &fsGroup,
 			},
-			VaultRegistration: mTypes.VaultRegistration{
-				Enabled:                true,
-				Path:                   "secret",
-				InitContainerResources: rr,
-			},
 		},
 	}
 }
@@ -228,7 +186,6 @@ func GenerateDefaultTestCase(
 	runtimeObjects []runtime.Object,
 	nameSpace string,
 	nameSpaceRequestName string,
-	vaultImpl vault.VaultHelper,
 ) CaseStruct {
 
 	utilsHelp := &TestUtilsImpl{}
@@ -256,7 +213,6 @@ func GenerateDefaultTestCase(
 			constants.ContextLogger:                core.GetLogger(true),
 			"contextResourceOwner":                 fakeServiceSpec,
 			constants.ContextServiceDeploymentInfo: map[string]string{},
-			constants.ContextVault:                 vaultImpl,
 			constants.KubernetesHelperImpl:         utilsHelp,
 		}),
 
@@ -270,7 +226,7 @@ func GenerateDefaultTestCase(
 	return caseStruct
 }
 
-func GenerateDefaultServiceWrapper(testName string, vaultImpl vault.VaultHelper) CaseStruct {
+func GenerateDefaultServiceWrapper(testName string) CaseStruct {
 
 	nameSpace := "fake-namespace"
 	nameSpaceRequestName := "fake-name"
@@ -289,19 +245,14 @@ func GenerateDefaultServiceWrapper(testName string, vaultImpl vault.VaultHelper)
 		fakePv,
 		nameSpace,
 		nameSpaceRequestName,
-		vaultImpl,
 	)
 }
 
 func TestExecutionCheck(t *testing.T) {
 	pass := uuid.Generate().String()
-	vaultImpl := &mocks.FakeVaultHelper{}
 	testFuncs := []func() CaseStruct{
 		func() CaseStruct {
-			vaultImpl.On("CheckSecretExists", "fakeSecretName").Return(false, make(map[string]interface{}), nil)
-			vaultImpl.On("GeneratePassword", mock.Anything).Return(pass, nil)
-			vaultImpl.On("StorePassword", mock.Anything, mock.Anything).Return(nil)
-			cs := GenerateDefaultServiceWrapper("One DC All Services", vaultImpl)
+			cs := GenerateDefaultServiceWrapper("One DC All Services")
 			cs.executor.SetExecutable(cs.builder.Build(cs.ctx))
 			cs.ReadResultFunc = func(t *testing.T, err error) {
 				password := cs.ctx.Get("password").(string)
@@ -314,7 +265,7 @@ func TestExecutionCheck(t *testing.T) {
 			return cs
 		},
 		func() CaseStruct {
-			cs := GenerateDefaultServiceWrapper("One DC All Services already existing vault secret", vaultImpl)
+			cs := GenerateDefaultServiceWrapper("One DC All Services already existing vault secret")
 			cs.executor.SetExecutable(cs.builder.Build(cs.ctx))
 			cs.ReadResultFunc = func(t *testing.T, err error) {
 				password := cs.ctx.Get("password").(string)
@@ -326,7 +277,7 @@ func TestExecutionCheck(t *testing.T) {
 			return cs
 		},
 		func() CaseStruct {
-			cs := GenerateDefaultServiceWrapper("Check 2 replicas", vaultImpl)
+			cs := GenerateDefaultServiceWrapper("Check 2 replicas")
 			cs.executor.SetExecutable(cs.builder.Build(cs.ctx))
 			cs.ReadResultFunc = func(t *testing.T, err error) {
 				dc := &v1apps.Deployment{}

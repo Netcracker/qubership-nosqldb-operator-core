@@ -9,7 +9,6 @@ const ContextRequest = "contextRequest"
 const ContextClient = "contextClient"
 const ContextKubeClient = "contextKubeClient"
 const ContextLogger = "contextLogger"
-const ContextVault = "contextVault"
 const ContextConsul = "contextConsul"
 const ContextConsulServiceRegistrations = "contextConsulServiceRegistrations"
 const ContextConsulRegistration = "contextConsulRegistration"
@@ -23,16 +22,16 @@ const LastApplliedName = "last-applied-configuration-info"
 const ContextServiceDeploymentInfo = "serviceDeploymentInfo"
 const MicroServiceSuccessDeploymentResult = "success"
 
-//Struct constants
+// Struct constants
 const KubernetesHelperImpl = "kubernetesHelperImpl"
 const ServicesUsersContextList = "ctxServicesUsersList"
 
-//common constants
+// common constants
 const BashCommand = "bash"
 const TriesCount = "triesCount"
 const RetryTimeoutSec = "retryTimeout"
 
-//kubernetes constants
+// kubernetes constants
 const StatefulSetPodNameTemplate = "%s-0"
 const ClusterDomainTemplate = "%s.svc.cluster.local"
 const ServiceClusterDomainTemplate = "%s." + ClusterDomainTemplate
@@ -50,5 +49,5 @@ const Tmp = "tmp"
 const Username = "username"
 const Password = "password"
 
-//vault
+// vault
 const TokenFilePath = "/var/run/secrets/kubernetes.io/serviceaccount/token"

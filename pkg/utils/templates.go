@@ -230,69 +230,6 @@ func MultiportServiceTemplate(name string, labels, selectors map[string]string, 
 
 }
 
-func GetEnvTemplateForVault(envName string, secretName string, secretKey string, vaultPath string) v1.EnvVar {
-	return v1.EnvVar{
-		Name:  envName,
-		Value: fmt.Sprintf("vault:%s/%s#%s", vaultPath, secretName, secretKey),
-	}
-}
-
-var VaultMounthPath = "/vault"
-var VaultEnvName = "vault-env"
-
-func GetVaultEnvPath() string {
-	return fmt.Sprintf("%s/%s", VaultMounthPath, VaultEnvName)
-}
-
-func GetInitContainerTemplateForVault(dockerImage string, resources *v1.ResourceRequirements) []v1.Container {
-	allowPrivilegeEscalation := false
-	initContainer := []v1.Container{
-		{
-			Name:  "copy-vault-env",
-			Image: dockerImage,
-			SecurityContext: &v1.SecurityContext{
-				Capabilities: &v1.Capabilities{
-					Drop: []v1.Capability{"ALL"},
-				},
-				AllowPrivilegeEscalation: &allowPrivilegeEscalation,
-			},
-			VolumeMounts: []v1.VolumeMount{
-				{
-					MountPath: VaultMounthPath,
-					Name:      VaultEnvName,
-				},
-			},
-			Command: []string{
-				"sh",
-				"-c",
-				fmt.Sprintf("cp /usr/local/bin/vault-env %s/", VaultMounthPath),
-			},
-			Resources: *resources,
-		},
-	}
-	return initContainer
-}
-
-func GetVaultVolume() v1.Volume {
-	volume := v1.Volume{
-		Name: VaultEnvName,
-		VolumeSource: v1.VolumeSource{
-			EmptyDir: &v1.EmptyDirVolumeSource{
-				Medium: "Memory",
-			},
-		},
-	}
-	return volume
-}
-
-func GetVaultVolumeMount() v1.VolumeMount {
-	volumeMount := v1.VolumeMount{
-		MountPath: VaultMounthPath,
-		Name:      VaultEnvName,
-	}
-	return volumeMount
-}
-
 func GetSecretEnvVar(envName string, secretName string, secretKey string) v1.EnvVar {
 	return v1.EnvVar{
 		Name: envName,
@@ -314,32 +251,6 @@ func GetPlainTextEnvVar(envName string, value string) v1.EnvVar {
 	}
 }
 
-func GetVaultRegistrationEnv(url string, role string, authMethod string) []v1.EnvVar {
-	envValue := []v1.EnvVar{
-		{
-			Name:  "VAULT_SKIP_VERIFY",
-			Value: "True",
-		},
-		{
-			Name:  "VAULT_ADDR",
-			Value: url,
-		},
-		{
-			Name:  "VAULT_PATH",
-			Value: authMethod,
-		},
-		{
-			Name:  "VAULT_ROLE",
-			Value: role,
-		},
-		{
-			Name:  "VAULT_IGNORE_MISSING_SECRETS",
-			Value: "False",
-		},
-	}
-	return envValue
-}
-
 func GetProxyService(name string, namespace string, labels map[string]string, externalName string) *v1.Service {
 	return &v1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -351,69 +262,6 @@ func GetProxyService(name string, namespace string, labels map[string]string, ex
 			Type:         v1.ServiceTypeExternalName,
 			ExternalName: externalName,
 		},
-	}
-}
-
-func VaultPodSpec(podSpec *v1.PodSpec, entrypoint []string, vault types.VaultRegistration) {
-	if vault.Enabled {
-		vaultCommand := []string{
-			GetVaultEnvPath(),
-		}
-
-		vaultVolumes := []v1.Volume{GetVaultVolume()}
-		for _, el := range podSpec.Volumes {
-			matched := false
-			for _, srcEl := range vaultVolumes {
-				matched = el.Name == srcEl.Name
-				if matched {
-					break
-				}
-			}
-
-			if !matched {
-				vaultVolumes = append(vaultVolumes, el)
-			}
-		}
-		podSpec.Volumes = vaultVolumes
-
-		podSpec.InitContainers = GetInitContainerTemplateForVault(vault.DockerImage, vault.InitContainerResources)
-
-		vaultMounts := []v1.VolumeMount{GetVaultVolumeMount()}
-		for _, el := range podSpec.Containers[0].VolumeMounts {
-			matched := false
-			for _, srcEl := range vaultMounts {
-				matched = el.Name == srcEl.Name
-				if matched {
-					break
-				}
-			}
-
-			if !matched {
-				vaultMounts = append(vaultMounts, el)
-			}
-		}
-		podSpec.Containers[0].VolumeMounts = vaultMounts
-
-		podSpec.Containers[0].Command = vaultCommand
-		if entrypoint != nil {
-			podSpec.Containers[0].Args = entrypoint
-		}
-
-		vaultEnvs := GetVaultRegistrationEnv(vault.Url, vault.Role, vault.Method)
-		for _, el := range podSpec.Containers[0].Env {
-			matched := false
-			for _, srcEl := range vaultEnvs {
-				matched = el.Name == srcEl.Name
-				if matched {
-					break
-				}
-			}
-
-			if !matched {
-				vaultEnvs = append(vaultEnvs, el)
-			}
-		}
-		podSpec.Containers[0].Env = vaultEnvs
 	}
 }
 

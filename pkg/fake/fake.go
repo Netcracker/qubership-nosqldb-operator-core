@@ -69,17 +69,6 @@ func (r *FakeBuilder) Build(ctx core.ExecutionContext) core.Executable {
 		Storage:           storage,
 		ContextVarToStore: nodesContext,
 	})
-
-	if spec.Spec.VaultRegistration.Enabled {
-		fake.AddStep(&steps.MoveSecretToVault{
-			SecretName:            "fakeSecretName",
-			PolicyName:            "fakePolicyName",
-			Policy:                "fakePolicy",
-			VaultRegistration:     &spec.Spec.VaultRegistration,
-			CtxVarToStorePassword: "password",
-			ConditionFunc:         nil,
-		})
-	}
 	fake.AddStep(&FakeDeployment{})
 	fake.AddStep(&FakeScaleDeployment{})
 
