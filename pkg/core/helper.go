@@ -35,7 +35,6 @@ type KubernetesHelper interface {
 	OpensslCommand(arg []string) ([]byte, error)
 	WaitForPVCBound(pvcName string, namespace string, waitSeconds int) error
 	WaitForPodsReady(labelSelectors map[string]string, namespace string, numberOfPods int, waitSeconds int) error
-	WaitForBackupPodsReady(labelSelectors map[string]string, namespace string, numberOfPods int, waitSeconds int, log *zap.Logger) error
 	WaitForPodsCompleted(labelSelectors map[string]string, namespace string, numberOfPods int, waitSeconds int) error
 	WaitForPodsCountByLabel(labelSelectors map[string]string, namespace string, numberOfPods int, waitSeconds int) error
 	WaitForDeploymentReady(deployName string, namespace string, waitSeconds int) error
@@ -204,39 +203,6 @@ func (r *DefaultKubernetesHelperImpl) WaitForPodsReady(labelSelectors map[string
 		return r.checkPodsByLabel(labelSelectors, namespace, numberOfPods, v1.PodRunning, func(status v1.ContainerStatus) (bool, error) {
 			return status.Ready, nil
 		})
-	})
-}
-
-func (r *DefaultKubernetesHelperImpl) WaitForBackupPodsReady(labelSelectors map[string]string, namespace string, numberOfPods int, waitSeconds int, log *zap.Logger) error {
-	return wait.PollImmediate(time.Second, time.Second*time.Duration(waitSeconds), func() (done bool, err error) {
-		podsReady, err := r.checkPodsByLabel(labelSelectors, namespace, numberOfPods, v1.PodRunning,
-			func(status v1.ContainerStatus) (bool, error) {
-				return status.Ready, nil
-			})
-		if err != nil || !podsReady {
-			return false, err
-		}
-		depName, ok := labelSelectors["name"] // adjust key as needed
-		if !ok {
-			log.Warn("No 'name' label found, skipping deployment generation check")
-			return podsReady, nil
-		}
-
-		dep := &v14.Deployment{}
-		if err := r.Client.Get(context.Background(), client.ObjectKey{Namespace: namespace, Name: depName}, dep); err != nil {
-			log.Warn("Failed to get Deployment", zap.Error(err))
-			return false, err
-		}
-
-		if dep.Status.ObservedGeneration < dep.Generation {
-			log.Info("Deployment has not observed latest generation yet",
-				zap.String("deployment", depName),
-				zap.Int64("observed", dep.Status.ObservedGeneration),
-				zap.Int64("generation", dep.Generation))
-			return false, nil
-		}
-
-		return true, nil
 	})
 }
 
