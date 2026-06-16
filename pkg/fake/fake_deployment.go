@@ -5,7 +5,6 @@ import (
 
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/core"
-	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/utils"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -40,8 +39,6 @@ func (r *FakeDeployment) Execute(ctx core.ExecutionContext) error {
 		spec.Spec.Policies.Tolerations,
 		*spec.Spec.Resources,
 		spec.Spec.PodSecurityContext)
-
-	utils.VaultPodSpec(&dc.Spec.Template.Spec, []string{"/fake.sh"}, spec.Spec.VaultRegistration)
 
 	err := helperImpl.DeleteDeploymentAndPods(dc.Name, request.Namespace, 10)
 

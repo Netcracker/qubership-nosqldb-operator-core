@@ -14,7 +14,6 @@ import (
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/consul"
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/types"
-	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/vault"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -32,7 +31,6 @@ type CommonReconciler interface {
 	SetServiceInstance(client client.Client, request reconcile.Request)
 	GetInstance() client.Object
 	GetDeploymentVersion() string
-	GetVaultRegistration() *types.VaultRegistration
 	GetConsulRegistration() *types.ConsulRegistration
 	GetConsulServiceRegistrations() map[string]*types.AgentServiceRegistration
 	GetMessage() string
@@ -122,7 +120,6 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 		constants.ContextClient:                     r.Client,
 		constants.ContextKubeClient:                 r.KubeConfig,
 		constants.ContextLogger:                     logger,
-		constants.ContextVault:                      vault.NewVaulterHelperImpl(vault.NewVaultClientImpl(r.Reconciler.GetVaultRegistration())),
 		constants.ContextConsulRegistration:         r.Reconciler.GetConsulRegistration(),
 		constants.ContextConsulServiceRegistrations: r.Reconciler.GetConsulServiceRegistrations(),
 		constants.ContextHashConfigMap:              r.Reconciler.GetConfigMapName(),

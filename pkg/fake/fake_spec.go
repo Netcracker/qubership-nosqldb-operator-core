@@ -7,7 +7,6 @@ import (
 )
 
 type FakeSpec struct {
-	VaultRegistration  types.VaultRegistration    `json:"vaultRegistration"`
 	Storage            *types.StorageRequirements `json:"storage,omitempty"`
 	Resources          *v1.ResourceRequirements   `json:"resources,omitempty"`
 	Policies           *Policies                  `json:"policies,omitempty"`
