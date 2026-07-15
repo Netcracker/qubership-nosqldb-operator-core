@@ -71,9 +71,13 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 	//we always return error == nil, this way we implement our own logic of reconcile retries
 	var executionErrResult error
 
+	var deploymentContext ExecutionContext
+
 	defer func() {
 		panicStackTrace := string(debug.Stack())
 		var errMsg string
+		var isCancellation bool
+
 		if err := recover(); err != nil {
 			// Panic
 			var stringErrorMsg string
@@ -82,7 +86,7 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 				stringErrorMsg = v
 			case error:
 				var dre *DRExecutionError
-				if errors.As(err.(error), &dre) {
+				if errors.As(v, &dre) {
 					statusErr := crHandler.SetDRStatus("failed").Commit()
 					if statusErr != nil {
 						logger.Sugar().Errorf("Failed to update DR status to 'failed', err: %v", statusErr)
@@ -90,13 +94,27 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 					logger.Error(v.Error() + "\n" + panicStackTrace)
 					return
 				}
+				if errors.Is(v, context.Canceled) || errors.Is(v, context.DeadlineExceeded) || ctx.Err() != nil {
+					isCancellation = true
+				}
 				stringErrorMsg = v.Error()
 			}
 
 			errMsg = stringErrorMsg + "\n" + panicStackTrace
 		} else if executionErrResult != nil {
 			// Usual exception
+			if errors.Is(executionErrResult, context.Canceled) || errors.Is(executionErrResult, context.DeadlineExceeded) || ctx.Err() != nil {
+				isCancellation = true
+			}
 			errMsg = executionErrResult.Error()
+		}
+
+		if isCancellation {
+			logger.Info(fmt.Sprintf("Reconciliation interrupted by shutdown/cancellation: %s. Resetting spec hash so the next reconcile retries the full flow.", errMsg))
+			if resetErr := doResetSpec(deploymentContext); resetErr != nil {
+				logger.Sugar().Errorf("Failed to reset spec config map after interrupted reconcile, err: %v", resetErr)
+			}
+			return
 		}
 
 		if errMsg != "" {
@@ -113,7 +131,7 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 	}()
 
 	r.Reconciler.SetServiceInstance(r.Client, request)
-	deploymentContext := GetExecutionContext(map[string]interface{}{
+	deploymentContext = GetExecutionContext(map[string]interface{}{
 		constants.ContextSpec:                       r.Reconciler.GetInstance(),
 		constants.ContextSchema:                     r.Scheme,
 		constants.ContextRequest:                    request,
@@ -123,6 +141,7 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 		constants.ContextConsulRegistration:         r.Reconciler.GetConsulRegistration(),
 		constants.ContextConsulServiceRegistrations: r.Reconciler.GetConsulServiceRegistrations(),
 		constants.ContextHashConfigMap:              r.Reconciler.GetConfigMapName(),
+		constants.ContextGoCtx:   ctx,
 	})
 
 	deploymentVersion := getEnv("DEPLOYMENT_VERSION", "")
@@ -245,6 +264,11 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 	}
 
 	if specHasChanges && executionErrResult == nil {
+		if ctx.Err() != nil {
+			logger.Info(fmt.Sprintf("Context error, skipping reconciliation: %v", ctx.Err()))
+			return reconcile.Result{}, nil
+		}
+
 		statusErr := crHandler.SetCRCondition(true, "In Progress", nil, "ReconcileCycleInProgress").SetDRStatus("running").Commit()
 		if statusErr != nil {
 			logger.Sugar().Errorf("Failed to update CR status, err: %v", statusErr)
