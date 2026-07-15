@@ -123,6 +123,7 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 		constants.ContextConsulRegistration:         r.Reconciler.GetConsulRegistration(),
 		constants.ContextConsulServiceRegistrations: r.Reconciler.GetConsulServiceRegistrations(),
 		constants.ContextHashConfigMap:              r.Reconciler.GetConfigMapName(),
+		constants.ContextGoCtx:   ctx,
 	})
 
 	deploymentVersion := getEnv("DEPLOYMENT_VERSION", "")
@@ -245,6 +246,11 @@ func (r *ReconcileCommonService) Reconcile(ctx context.Context, request reconcil
 	}
 
 	if specHasChanges && executionErrResult == nil {
+		if ctx.Err() != nil {
+			logger.Info(fmt.Sprintf("Context error, skipping reconciliation: %v", ctx.Err()))
+			return reconcile.Result{}, nil
+		}
+
 		statusErr := crHandler.SetCRCondition(true, "In Progress", nil, "ReconcileCycleInProgress").SetDRStatus("running").Commit()
 		if statusErr != nil {
 			logger.Sugar().Errorf("Failed to update CR status, err: %v", statusErr)

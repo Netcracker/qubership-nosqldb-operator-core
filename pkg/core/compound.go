@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"strings"
@@ -43,6 +44,13 @@ func (r *DefaultCompound) Validate(ctx ExecutionContext) error {
 func (r *DefaultCompound) Execute(ctx ExecutionContext) error {
 	return r.iterateOverSteps(
 		func(element Executable) error {
+			if goCtx, ok := ctx.Get(constants.ContextGoCtx).(context.Context); ok && goCtx != nil {
+				select {
+				case <-goCtx.Done():
+					return goCtx.Err()
+				default:
+				}
+			}
 			if run, err := element.Condition(ctx); run {
 				logger := ctx.Get(constants.ContextLogger)
 				if logger != nil {

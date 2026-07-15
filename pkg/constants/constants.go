@@ -22,6 +22,8 @@ const LastApplliedName = "last-applied-configuration-info"
 const ContextServiceDeploymentInfo = "serviceDeploymentInfo"
 const MicroServiceSuccessDeploymentResult = "success"
 
+const ContextGoCtx = "contextGoCtx"
+
 // Struct constants
 const KubernetesHelperImpl = "kubernetesHelperImpl"
 const ServicesUsersContextList = "ctxServicesUsersList"
