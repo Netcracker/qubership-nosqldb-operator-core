@@ -20,6 +20,7 @@ type StorageRequirements struct {
 	MatchLabelSelectors []map[string]string `json:"matchLabelSelectors,omitempty"`
 	WaitPVCBound        bool                `json:"waitPvcBound,omitempty"`
 	MountSettings       *v1.VolumeMount     `json:"mountSettings,omitempty"`
+	Annotations         map[string]string   `json:"annotations,omitempty"`
 }
 
 type DisasterRecoveryStatus struct {
@@ -145,6 +146,13 @@ func (in *StorageRequirements) DeepCopyInto(out *StorageRequirements) {
 		in, out := &in.MountSettings, &out.MountSettings
 		*out = new(v1.VolumeMount)
 		(*in).DeepCopyInto(*out)
+	}
+	if in.Annotations != nil {
+		in, out := &in.Annotations, &out.Annotations
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
 	}
 }
 
