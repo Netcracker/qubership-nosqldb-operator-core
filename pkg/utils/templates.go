@@ -62,6 +62,10 @@ func PVCTemplate(storage types.StorageRequirements, pvcId int, nameFormat string
 		}
 	}
 
+	for k, v := range storage.Annotations {
+		pvc.ObjectMeta.Annotations[k] = v
+	}
+
 	return pvc
 }
 
