@@ -57,6 +57,7 @@ type KubernetesHelper interface {
 	ScaleReplicationController(obj *v1.ReplicationController, replicas, timeout int) error
 	RestartPod(pod *v1.Pod, namespace string, waitSeconds int) error
 	GetConfigMap(name, namespace string) (*v1.ConfigMap, error)
+	PatchPVCAnnotations(name, namespace string, annotations map[string]string) error
 	//CheckSpecChange(ctx ExecutionContext, spec interface{}, serviceName string) (bool, error)
 }
 
@@ -355,6 +356,18 @@ func (r *DefaultKubernetesHelperImpl) ListRuntimeObjectsByLabels(list client.Obj
 	err := r.Client.List(context.Background(), list, listOps...)
 
 	return err
+}
+
+func (r *DefaultKubernetesHelperImpl) PatchPVCAnnotations(name, namespace string, annotations map[string]string) error {
+	annotationsJSON, err := json.Marshal(annotations)
+	if err != nil {
+		return err
+	}
+	pvc := &v1.PersistentVolumeClaim{}
+	pvc.Name = name
+	pvc.Namespace = namespace
+	patch := fmt.Sprintf(`{"metadata":{"annotations":%s}}`, string(annotationsJSON))
+	return r.Client.Patch(context.Background(), pvc, client.RawPatch(types.MergePatchType, []byte(patch)))
 }
 
 func ListRuntimeObjectsByName(obj client.Object,

@@ -56,13 +56,28 @@ func (r *CreatePVCStep) Execute(ctx core.ExecutionContext) error {
 		r.AccessMode = v1core.ReadWriteOnce
 	}
 
+	existingPVCList := &v1core.PersistentVolumeClaimList{}
+	listErr := helperImpl.ListRuntimeObjectsByLabels(existingPVCList, request.Namespace, r.LabelSelector)
+	core.PanicError(listErr, log.Error, "Listing existing PVCs failed")
+	existingPVCs := make(map[string]struct{}, len(existingPVCList.Items))
+	for _, pvc := range existingPVCList.Items {
+		existingPVCs[pvc.Name] = struct{}{}
+	}
+
 	var pvcArray []string
 	for i := r.StartIndex; i < (maxSize + r.StartIndex); i++ {
 		template := utils.PVCTemplate(*r.Storage, i, r.NameFormat, r.LabelSelector, request.Namespace, r.AccessMode)
 
-		err := helperImpl.CreateRuntimeObject(scheme, r.Owner, template, template.ObjectMeta)
-
-		core.PanicError(err, log.Error, "Creating of PVC "+template.ObjectMeta.Name+" failed")
+		if _, exists := existingPVCs[template.Name]; exists {
+			log.Debug(fmt.Sprintf("PVC %s already exists, updating annotations", template.Name))
+			if len(r.Storage.Annotations) > 0 {
+				err := helperImpl.PatchPVCAnnotations(template.Name, request.Namespace, r.Storage.Annotations)
+				core.PanicError(err, log.Error, "Patching annotations on PVC "+template.Name+" failed")
+			}
+		} else {
+			err := helperImpl.CreateRuntimeObject(scheme, r.Owner, template, template.ObjectMeta)
+			core.PanicError(err, log.Error, "Creating of PVC "+template.ObjectMeta.Name+" failed")
+		}
 
 		pvcArray = append(pvcArray, template.ObjectMeta.Name)
 	}
