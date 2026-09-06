@@ -15,14 +15,30 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
+// WorkloadKind identifies the Kubernetes workload type that owns PVCs being resized.
+type WorkloadKind string
+
+const (
+	WorkloadKindStatefulSet WorkloadKind = "StatefulSet"
+	WorkloadKindDeployment  WorkloadKind = "Deployment"
+)
+
+// StatefulSetConfig holds scale configuration for a workload that owns PVCs being resized.
+// Kind defaults to StatefulSet when empty.
 type StatefulSetConfig struct {
 	Name      string
 	Namespace string
 	Replicas  int32
+	Kind      WorkloadKind
 }
 
+// WaitPVCResizeStep waits for in-progress PVC expansions to complete.
+// When the storage driver requires a filesystem resize (FileSystemResizePending condition),
+// it performs scale-down/scale-up of the owning workloads with exponential backoff
+// until all PVCs reach the desired capacity.
 type WaitPVCResizeStep struct {
 	core.Executable
+	// GetStatefulSetConfigs returns the workloads that mount the resizing PVCs.
 	GetStatefulSetConfigs func(ctx core.ExecutionContext) []StatefulSetConfig
 	WaitTimeout           int
 }
@@ -62,7 +78,7 @@ func (r *WaitPVCResizeStep) Execute(ctx core.ExecutionContext) error {
 
 	ssetConfigs := r.GetStatefulSetConfigs(ctx)
 	if len(ssetConfigs) == 0 {
-		log.Warn("PVC filesystem resize pending but no StatefulSets configured — skipping pod restart")
+		log.Warn("PVC filesystem resize pending but no workloads configured — skipping pod restart")
 		return nil
 	}
 
@@ -80,30 +96,19 @@ func (r *WaitPVCResizeStep) Execute(ctx core.ExecutionContext) error {
 		}
 
 		delay := 10 * time.Second * time.Duration(1<<uint(attempt-1))
-		log.Info(fmt.Sprintf("PVC resize restart attempt %d — scaling down StatefulSets, delay before scale-up: %s", attempt, delay))
+		log.Info(fmt.Sprintf("PVC resize restart attempt %d — scaling down workloads, delay before scale-up: %s", attempt, delay))
 
 		for _, config := range ssetConfigs {
-			sts := &appsv1.StatefulSet{}
-			if err := kubeClient.Get(context.TODO(), k8stypes.NamespacedName{Name: config.Name, Namespace: config.Namespace}, sts); err != nil {
-				return fmt.Errorf("getting StatefulSet %s failed: %w", config.Name, err)
-			}
-			if err := helperImpl.ScaleStatefulset(sts, 0, r.WaitTimeout); err != nil {
-				return fmt.Errorf("scaling StatefulSet %s to 0 failed: %w", config.Name, err)
-			}
-			if err := helperImpl.WaitForPodsCountByLabel(sts.Spec.Template.Labels, config.Namespace, 0, r.WaitTimeout); err != nil {
-				return fmt.Errorf("waiting for StatefulSet %s pods to terminate failed: %w", config.Name, err)
+			if err := scaleWorkload(kubeClient, helperImpl, config, 0, r.WaitTimeout); err != nil {
+				return err
 			}
 		}
 
 		time.Sleep(delay)
 
 		for _, config := range ssetConfigs {
-			sts := &appsv1.StatefulSet{}
-			if err := kubeClient.Get(context.TODO(), k8stypes.NamespacedName{Name: config.Name, Namespace: config.Namespace}, sts); err != nil {
-				return fmt.Errorf("getting StatefulSet %s failed: %w", config.Name, err)
-			}
-			if err := helperImpl.ScaleStatefulset(sts, int(config.Replicas), r.WaitTimeout); err != nil {
-				return fmt.Errorf("scaling StatefulSet %s to %d failed: %w", config.Name, config.Replicas, err)
+			if err := scaleWorkload(kubeClient, helperImpl, config, int(config.Replicas), r.WaitTimeout); err != nil {
+				return err
 			}
 		}
 
@@ -127,4 +132,33 @@ func (r *WaitPVCResizeStep) Execute(ctx core.ExecutionContext) error {
 
 		attempt++
 	}
+}
+
+// scaleWorkload scales a StatefulSet or Deployment to the given replica count and waits for pods.
+func scaleWorkload(kubeClient client.Client, helperImpl core.KubernetesHelper, config StatefulSetConfig, replicas int, waitTimeout int) error {
+	switch config.Kind {
+	case WorkloadKindDeployment:
+		depl := &appsv1.Deployment{}
+		if err := kubeClient.Get(context.TODO(), k8stypes.NamespacedName{Name: config.Name, Namespace: config.Namespace}, depl); err != nil {
+			return fmt.Errorf("getting Deployment %s: %w", config.Name, err)
+		}
+		if err := helperImpl.ScaleDeployment(depl, replicas, waitTimeout); err != nil {
+			return fmt.Errorf("scaling Deployment %s to %d: %w", config.Name, replicas, err)
+		}
+		if err := helperImpl.WaitForPodsCountByLabel(depl.Spec.Template.Labels, config.Namespace, replicas, waitTimeout); err != nil {
+			return fmt.Errorf("waiting for Deployment %s pods: %w", config.Name, err)
+		}
+	default: // StatefulSet
+		sts := &appsv1.StatefulSet{}
+		if err := kubeClient.Get(context.TODO(), k8stypes.NamespacedName{Name: config.Name, Namespace: config.Namespace}, sts); err != nil {
+			return fmt.Errorf("getting StatefulSet %s: %w", config.Name, err)
+		}
+		if err := helperImpl.ScaleStatefulset(sts, replicas, waitTimeout); err != nil {
+			return fmt.Errorf("scaling StatefulSet %s to %d: %w", config.Name, replicas, err)
+		}
+		if err := helperImpl.WaitForPodsCountByLabel(sts.Spec.Template.Labels, config.Namespace, replicas, waitTimeout); err != nil {
+			return fmt.Errorf("waiting for StatefulSet %s pods: %w", config.Name, err)
+		}
+	}
+	return nil
 }

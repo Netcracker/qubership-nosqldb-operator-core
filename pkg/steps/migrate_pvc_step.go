@@ -8,7 +8,6 @@ import (
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/core"
 	"go.uber.org/zap"
-	appsv1 "k8s.io/api/apps/v1"
 	v1core "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -57,18 +56,11 @@ func (r *MigratePVCStep) Execute(ctx core.ExecutionContext) error {
 
 	ssetConfigs := r.GetStatefulSetConfigs(ctx)
 
-	log.Info(fmt.Sprintf("PVC migration step: %d PVCs to migrate, %d StatefulSets to drain", len(migrationPVCs), len(ssetConfigs)))
+	log.Info(fmt.Sprintf("PVC migration step: %d PVCs to migrate, %d workloads to drain", len(migrationPVCs), len(ssetConfigs)))
 
 	for _, config := range ssetConfigs {
-		sts := &appsv1.StatefulSet{}
-		if err := kubeClient.Get(context.TODO(), k8stypes.NamespacedName{Name: config.Name, Namespace: config.Namespace}, sts); err != nil {
-			return fmt.Errorf("getting StatefulSet %s: %w", config.Name, err)
-		}
-		if err := helperImpl.ScaleStatefulset(sts, 0, r.WaitTimeout); err != nil {
-			return fmt.Errorf("scaling StatefulSet %s to 0: %w", config.Name, err)
-		}
-		if err := helperImpl.WaitForPodsCountByLabel(sts.Spec.Template.Labels, config.Namespace, 0, r.WaitTimeout); err != nil {
-			return fmt.Errorf("waiting for StatefulSet %s pods to terminate: %w", config.Name, err)
+		if err := scaleWorkload(kubeClient, helperImpl, config, 0, r.WaitTimeout); err != nil {
+			return err
 		}
 	}
 
@@ -81,12 +73,8 @@ func (r *MigratePVCStep) Execute(ctx core.ExecutionContext) error {
 	}
 
 	for _, config := range ssetConfigs {
-		sts := &appsv1.StatefulSet{}
-		if err := kubeClient.Get(context.TODO(), k8stypes.NamespacedName{Name: config.Name, Namespace: config.Namespace}, sts); err != nil {
-			return fmt.Errorf("getting StatefulSet %s: %w", config.Name, err)
-		}
-		if err := helperImpl.ScaleStatefulset(sts, int(config.Replicas), r.WaitTimeout); err != nil {
-			return fmt.Errorf("scaling StatefulSet %s to %d: %w", config.Name, config.Replicas, err)
+		if err := scaleWorkload(kubeClient, helperImpl, config, int(config.Replicas), r.WaitTimeout); err != nil {
+			return err
 		}
 	}
 
