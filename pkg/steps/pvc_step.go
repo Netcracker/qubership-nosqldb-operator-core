@@ -59,17 +59,35 @@ func (r *CreatePVCStep) Execute(ctx core.ExecutionContext) error {
 	existingPVCList := &v1core.PersistentVolumeClaimList{}
 	listErr := helperImpl.ListRuntimeObjectsByLabels(existingPVCList, request.Namespace, r.LabelSelector)
 	core.PanicError(listErr, log.Error, "Listing existing PVCs failed")
-	existingPVCs := make(map[string]struct{}, len(existingPVCList.Items))
+	existingPVCs := make(map[string]v1core.PersistentVolumeClaim, len(existingPVCList.Items))
 	for _, pvc := range existingPVCList.Items {
-		existingPVCs[pvc.Name] = struct{}{}
+		existingPVCs[pvc.Name] = pvc
 	}
 
 	var pvcArray []string
+	var resizingPVCs []*v1core.PersistentVolumeClaim
+
 	for i := r.StartIndex; i < (maxSize + r.StartIndex); i++ {
 		template := utils.PVCTemplate(*r.Storage, i, r.NameFormat, r.LabelSelector, request.Namespace, r.AccessMode)
 
-		if _, exists := existingPVCs[template.Name]; exists {
-			log.Debug(fmt.Sprintf("PVC %s already exists, updating annotations", template.Name))
+		if foundPvc, exists := existingPVCs[template.Name]; exists {
+			log.Debug(fmt.Sprintf("PVC %s already exists, checking size", template.Name))
+
+			desiredSize := template.Spec.Resources.Requests[v1core.ResourceStorage]
+			currentSize := foundPvc.Spec.Resources.Requests[v1core.ResourceStorage]
+
+			switch desiredSize.Cmp(currentSize) {
+			case 1:
+				log.Info(fmt.Sprintf("PVC %s resize requested: %s -> %s", template.Name, currentSize.String(), desiredSize.String()))
+				resizeInProgress, err := helperImpl.ResizePVC(template.Name, request.Namespace, desiredSize)
+				core.PanicError(err, log.Error, "Resizing PVC "+template.Name+" failed")
+				if resizeInProgress {
+					resizingPVCs = append(resizingPVCs, template.DeepCopy())
+				}
+			case -1:
+				log.Info(fmt.Sprintf("PVC %s decrease from %s to %s requires migration (not handled in this step)", template.Name, currentSize.String(), desiredSize.String()))
+			}
+
 			if len(r.Storage.Annotations) > 0 {
 				err := helperImpl.PatchPVCAnnotations(template.Name, request.Namespace, r.Storage.Annotations)
 				core.PanicError(err, log.Error, "Patching annotations on PVC "+template.Name+" failed")
@@ -82,12 +100,12 @@ func (r *CreatePVCStep) Execute(ctx core.ExecutionContext) error {
 		pvcArray = append(pvcArray, template.ObjectMeta.Name)
 	}
 
+	ctx.Set(constants.ResizingPVCsContextVar, resizingPVCs)
+
 	if r.WaitPVCBound {
 		for _, pvcName := range pvcArray {
 			err := helperImpl.WaitForPVCBound(pvcName, request.Namespace, r.WaitTimeout)
-
 			core.PanicError(err, log.Error, "PVC "+pvcName+" 'Bound' status waiting failed")
-
 			log.Debug(fmt.Sprintf("PVC %s is bound", pvcName))
 		}
 	}

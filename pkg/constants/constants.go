@@ -51,3 +51,5 @@ const Password = "password"
 
 // vault
 const TokenFilePath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+const ResizingPVCsContextVar = "resizingPVCs"

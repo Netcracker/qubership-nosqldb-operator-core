@@ -18,6 +18,7 @@ import (
 	v14 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -58,6 +59,9 @@ type KubernetesHelper interface {
 	RestartPod(pod *v1.Pod, namespace string, waitSeconds int) error
 	GetConfigMap(name, namespace string) (*v1.ConfigMap, error)
 	PatchPVCAnnotations(name, namespace string, annotations map[string]string) error
+	ResizePVC(pvcName, namespace string, desiredSize resource.Quantity) (bool, error)
+	WaitForPVCResizeState(pvcName, namespace string, desiredSize resource.Quantity) (bool, error)
+	WaitForPVCCapacity(pvcName, namespace string, desiredSize resource.Quantity, timeout time.Duration) (bool, error)
 	//CheckSpecChange(ctx ExecutionContext, spec interface{}, serviceName string) (bool, error)
 }
 
@@ -588,6 +592,90 @@ func (r *DefaultKubernetesHelperImpl) RestartPod(pod *v1.Pod, namespace string, 
 	}
 
 	return nil
+}
+
+func (r *DefaultKubernetesHelperImpl) ResizePVC(pvcName, namespace string, desiredSize resource.Quantity) (bool, error) {
+	pvc := &v1.PersistentVolumeClaim{}
+	if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: pvcName, Namespace: namespace}, pvc); err != nil {
+		return false, err
+	}
+
+	currentSize := pvc.Spec.Resources.Requests[v1.ResourceStorage]
+
+	switch desiredSize.Cmp(currentSize) {
+	case 1:
+		pvc.Spec.Resources.Requests[v1.ResourceStorage] = desiredSize
+		if err := r.Client.Update(context.TODO(), pvc); err != nil {
+			return false, err
+		}
+		return true, nil
+	case 0:
+		capacity := pvc.Status.Capacity[v1.ResourceStorage]
+		if !capacity.IsZero() && capacity.Cmp(desiredSize) < 0 {
+			return true, nil
+		}
+		return false, nil
+	case -1:
+		return false, fmt.Errorf("PVC %s shrink from %s to %s not supported", pvcName, currentSize.String(), desiredSize.String())
+	}
+	return false, nil
+}
+
+func (r *DefaultKubernetesHelperImpl) WaitForPVCResizeState(pvcName, namespace string, desiredSize resource.Quantity) (bool, error) {
+	restartRequired := false
+
+	err := wait.PollUntilContextTimeout(context.Background(), time.Second, 2*time.Minute, true,
+		func(ctx context.Context) (bool, error) {
+			currentPvc := &v1.PersistentVolumeClaim{}
+			if err := r.Client.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: namespace}, currentPvc); err != nil {
+				return false, err
+			}
+
+			capacity := currentPvc.Status.Capacity[v1.ResourceStorage]
+			if capacity.Cmp(desiredSize) >= 0 {
+				return true, nil
+			}
+
+			for _, condition := range currentPvc.Status.Conditions {
+				if condition.Type == v1.PersistentVolumeClaimFileSystemResizePending &&
+					condition.Status == v1.ConditionTrue {
+					restartRequired = true
+					return true, nil
+				}
+			}
+
+			return false, nil
+		},
+	)
+
+	return restartRequired, err
+}
+
+func (r *DefaultKubernetesHelperImpl) WaitForPVCCapacity(pvcName, namespace string, desiredSize resource.Quantity, timeout time.Duration) (bool, error) {
+	resized := false
+
+	err := wait.PollUntilContextTimeout(context.Background(), time.Second, timeout, true,
+		func(ctx context.Context) (bool, error) {
+			pvc := &v1.PersistentVolumeClaim{}
+			if err := r.Client.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: namespace}, pvc); err != nil {
+				return false, nil
+			}
+
+			capacity := pvc.Status.Capacity[v1.ResourceStorage]
+			if capacity.Cmp(desiredSize) >= 0 {
+				resized = true
+				return true, nil
+			}
+
+			return false, nil
+		},
+	)
+
+	if err == context.DeadlineExceeded {
+		return false, nil
+	}
+
+	return resized, err
 }
 
 func ListRuntimeObjectsByNamespace(list client.ObjectList, cl client.Client, namespace string) error {
