@@ -53,3 +53,4 @@ const Password = "password"
 const TokenFilePath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
 const ResizingPVCsContextVar = "resizingPVCs"
+const MigrationNeededPVCsContextVar = "migrationNeededPVCs"

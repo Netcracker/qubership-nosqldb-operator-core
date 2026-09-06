@@ -15,22 +15,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// StatefulSetConfig holds the name, namespace and desired replica count for a StatefulSet
-// that mounts PVCs being resized.
 type StatefulSetConfig struct {
 	Name      string
 	Namespace string
 	Replicas  int32
 }
 
-// WaitPVCResizeStep waits for in-progress PVC expansions to complete.
-// When the storage driver requires a filesystem resize (FileSystemResizePending condition),
-// it performs scale-down/scale-up of the owning StatefulSets with exponential backoff
-// until all PVCs reach the desired capacity.
 type WaitPVCResizeStep struct {
 	core.Executable
-	// GetStatefulSetConfigs returns the StatefulSets that mount the resizing PVCs.
-	// Called at execution time so it can read dynamic spec values from context.
 	GetStatefulSetConfigs func(ctx core.ExecutionContext) []StatefulSetConfig
 	WaitTimeout           int
 }

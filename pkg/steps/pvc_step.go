@@ -66,6 +66,7 @@ func (r *CreatePVCStep) Execute(ctx core.ExecutionContext) error {
 
 	var pvcArray []string
 	var resizingPVCs []*v1core.PersistentVolumeClaim
+	var migrationNeededPVCs []*v1core.PersistentVolumeClaim
 
 	for i := r.StartIndex; i < (maxSize + r.StartIndex); i++ {
 		template := utils.PVCTemplate(*r.Storage, i, r.NameFormat, r.LabelSelector, request.Namespace, r.AccessMode)
@@ -79,13 +80,27 @@ func (r *CreatePVCStep) Execute(ctx core.ExecutionContext) error {
 			switch desiredSize.Cmp(currentSize) {
 			case 1:
 				log.Info(fmt.Sprintf("PVC %s resize requested: %s -> %s", template.Name, currentSize.String(), desiredSize.String()))
-				resizeInProgress, err := helperImpl.ResizePVC(template.Name, request.Namespace, desiredSize)
-				core.PanicError(err, log.Error, "Resizing PVC "+template.Name+" failed")
-				if resizeInProgress {
-					resizingPVCs = append(resizingPVCs, template.DeepCopy())
+				expandable := false
+				if storageClass := foundPvc.Spec.StorageClassName; storageClass != nil && *storageClass != "" {
+					var scErr error
+					expandable, scErr = helperImpl.IsStorageClassExpandable(*storageClass)
+					if scErr != nil {
+						log.Warn(fmt.Sprintf("Could not check StorageClass %s expandability: %v — defaulting to migration", *storageClass, scErr))
+					}
+				}
+				if expandable {
+					resizeInProgress, err := helperImpl.ResizePVC(template.Name, request.Namespace, desiredSize)
+					core.PanicError(err, log.Error, "Resizing PVC "+template.Name+" failed")
+					if resizeInProgress {
+						resizingPVCs = append(resizingPVCs, template.DeepCopy())
+					}
+				} else {
+					log.Info(fmt.Sprintf("PVC %s StorageClass does not support expansion or is unknown — using migration path", template.Name))
+					migrationNeededPVCs = append(migrationNeededPVCs, template.DeepCopy())
 				}
 			case -1:
-				log.Info(fmt.Sprintf("PVC %s decrease from %s to %s requires migration (not handled in this step)", template.Name, currentSize.String(), desiredSize.String()))
+				log.Info(fmt.Sprintf("PVC %s decrease from %s to %s requires data migration", template.Name, currentSize.String(), desiredSize.String()))
+				migrationNeededPVCs = append(migrationNeededPVCs, template.DeepCopy())
 			}
 
 			if len(r.Storage.Annotations) > 0 {
@@ -101,6 +116,7 @@ func (r *CreatePVCStep) Execute(ctx core.ExecutionContext) error {
 	}
 
 	ctx.Set(constants.ResizingPVCsContextVar, resizingPVCs)
+	ctx.Set(constants.MigrationNeededPVCsContextVar, migrationNeededPVCs)
 
 	if r.WaitPVCBound {
 		for _, pvcName := range pvcArray {

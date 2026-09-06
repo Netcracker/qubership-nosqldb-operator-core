@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 	v14 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -62,6 +63,7 @@ type KubernetesHelper interface {
 	ResizePVC(pvcName, namespace string, desiredSize resource.Quantity) (bool, error)
 	WaitForPVCResizeState(pvcName, namespace string, desiredSize resource.Quantity) (bool, error)
 	WaitForPVCCapacity(pvcName, namespace string, desiredSize resource.Quantity, timeout time.Duration) (bool, error)
+	IsStorageClassExpandable(storageClassName string) (bool, error)
 	//CheckSpecChange(ctx ExecutionContext, spec interface{}, serviceName string) (bool, error)
 }
 
@@ -676,6 +678,14 @@ func (r *DefaultKubernetesHelperImpl) WaitForPVCCapacity(pvcName, namespace stri
 	}
 
 	return resized, err
+}
+
+func (r *DefaultKubernetesHelperImpl) IsStorageClassExpandable(storageClassName string) (bool, error) {
+	sc := &storagev1.StorageClass{}
+	if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: storageClassName}, sc); err != nil {
+		return false, err
+	}
+	return sc.AllowVolumeExpansion != nil && *sc.AllowVolumeExpansion, nil
 }
 
 func ListRuntimeObjectsByNamespace(list client.ObjectList, cl client.Client, namespace string) error {
