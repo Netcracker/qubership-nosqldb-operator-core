@@ -238,7 +238,7 @@ func (r *MigratePVCStep) migrationPodTemplate(name, namespace, srcPVCName, dstPV
 					},
 					Command: []string{
 						"/bin/sh", "-c",
-						"tar -C /source -cf - --exclude=./lost+found . | tar -C /dest -xmf - --no-overwrite-dir && echo 'PVC migration complete'",
+						"cd /source && find . -mindepth 1 -not -name 'lost+found' -not -path './lost+found/*' | tar -cf - -T -| tar -C /dest -xmf - && echo 'PVC migration complete'",
 					},
 					VolumeMounts: []v1core.VolumeMount{
 						{Name: "source", MountPath: "/source"},
