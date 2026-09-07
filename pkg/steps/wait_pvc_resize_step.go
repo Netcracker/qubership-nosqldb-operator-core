@@ -37,7 +37,7 @@ type StatefulSetConfig struct {
 // it performs scale-down/scale-up of the owning workloads with exponential backoff
 // until all PVCs reach the desired capacity.
 type WaitPVCResizeStep struct {
-	core.Executable
+	core.DefaultExecutable
 	// GetStatefulSetConfigs returns the workloads that mount the resizing PVCs.
 	GetStatefulSetConfigs func(ctx core.ExecutionContext) []StatefulSetConfig
 	WaitTimeout           int

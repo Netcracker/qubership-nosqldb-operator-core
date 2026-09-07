@@ -33,7 +33,7 @@ import (
 // The step is idempotent: it checks intermediate PVC state on each reconcile so it can
 // resume from partial completion without re-copying already-migrated data.
 type MigratePVCStep struct {
-	core.Executable
+	core.DefaultExecutable
 	// GetStatefulSetConfigs returns the StatefulSets that mount the migrating PVCs.
 	GetStatefulSetConfigs func(ctx core.ExecutionContext) []StatefulSetConfig
 	// MigrationImage is the container image used in migration pods (must have /bin/sh and cp).
