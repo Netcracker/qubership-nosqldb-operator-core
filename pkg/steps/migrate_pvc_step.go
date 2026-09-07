@@ -36,10 +36,14 @@ type MigratePVCStep struct {
 	core.DefaultExecutable
 	// GetStatefulSetConfigs returns the StatefulSets that mount the migrating PVCs.
 	GetStatefulSetConfigs func(ctx core.ExecutionContext) []StatefulSetConfig
-	// MigrationImage is the container image used in migration pods (must have /bin/sh and cp).
+	// MigrationImage is the container image used in migration pods (must have /bin/sh and tar).
 	MigrationImage     string
 	WaitTimeout        int
-	PodSecurityContext *v1core.PodSecurityContext
+	// MigrationPodTimeout overrides WaitTimeout for migration pod polling. Defaults to 24h.
+	// Set higher for TB-scale PVCs. If the reconcile times out mid-copy the pod keeps running
+	// and the next reconcile re-attaches to it, so correctness is preserved regardless.
+	MigrationPodTimeout int
+	PodSecurityContext  *v1core.PodSecurityContext
 }
 
 func (r *MigratePVCStep) Condition(ctx core.ExecutionContext) (bool, error) {
@@ -162,11 +166,18 @@ func (r *MigratePVCStep) runMigrationPod(kubeClient client.Client, log *zap.Logg
 
 	log.Info(fmt.Sprintf("Waiting for migration pod %s to complete", podName))
 
-	timeoutDuration := time.Duration(r.WaitTimeout) * time.Second
+	podTimeout := r.MigrationPodTimeout
+	if podTimeout <= 0 {
+		podTimeout = 24 * 60 * 60 // 24h default
+	}
+	timeoutDuration := time.Duration(podTimeout) * time.Second
 	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, timeoutDuration, true,
 		func(pollCtx context.Context) (bool, error) {
 			foundPod := &v1core.Pod{}
 			if err := kubeClient.Get(pollCtx, k8stypes.NamespacedName{Name: podName, Namespace: namespace}, foundPod); err != nil {
+				if k8serrors.IsNotFound(err) {
+					return false, nil // cache not yet synced after Create; keep polling
+				}
 				return false, err
 			}
 			switch foundPod.Status.Phase {
@@ -238,7 +249,7 @@ func (r *MigratePVCStep) migrationPodTemplate(name, namespace, srcPVCName, dstPV
 					},
 					Command: []string{
 						"/bin/sh", "-c",
-						"cd /source && find . -mindepth 1 -not -name 'lost+found' -not -path './lost+found/*' | tar -cf - -T -| tar -C /dest -xmf - && echo 'PVC migration complete'",
+						"cd /source && find . -mindepth 1 -not -name 'lost+found' -not -path './lost+found/*' | tar -cf - -T - | tar -C /dest -xmf - && echo 'PVC migration complete'",
 					},
 					VolumeMounts: []v1core.VolumeMount{
 						{Name: "source", MountPath: "/source"},
