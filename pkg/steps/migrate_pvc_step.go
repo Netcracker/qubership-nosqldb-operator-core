@@ -173,7 +173,7 @@ func (r *MigratePVCStep) runMigrationPod(kubeClient client.Client, log *zap.Logg
 			case v1core.PodSucceeded:
 				return true, nil
 			case v1core.PodFailed:
-				_ = kubeClient.Delete(context.TODO(), foundPod)
+				// _ = kubeClient.Delete(context.TODO(), foundPod)
 				return false, fmt.Errorf("migration pod %s failed: %s", podName, foundPod.Status.Message)
 			}
 			return false, nil
