@@ -122,6 +122,15 @@ func (r *MigratePVCStep) migratePVC(kubeClient client.Client, log *zap.Logger, n
 		}
 	}
 
+	if err := wait.PollUntilContextTimeout(context.Background(), 500*time.Millisecond, 30*time.Second, false,
+      func(ctx context.Context) (bool, error) {
+        check := &v1core.PersistentVolumeClaim{}
+        err := kubeClient.Get(ctx, k8stypes.NamespacedName{Name: pvcName, Namespace: namespace}, check)
+        return k8serrors.IsNotFound(err), nil
+      }); err != nil {
+      return fmt.Errorf("waiting for old PVC %s cache eviction: %w", pvcName, err)
+    }
+	
 	// Phase 2: copy temp → new PVC with original name (skip if already done)
 	newPVC := &v1core.PersistentVolumeClaim{}
 	newExists := kubeClient.Get(context.TODO(), k8stypes.NamespacedName{Name: pvcName, Namespace: namespace}, newPVC) == nil
