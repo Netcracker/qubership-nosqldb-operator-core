@@ -445,17 +445,20 @@ func (r *DefaultKubernetesHelperImpl) WaitForPVCExpansion(pvcName, namespace str
 			if pvc.Status.Phase != v1.ClaimBound {
 				return false, nil
 			}
+			requested := pvc.Spec.Resources.Requests[v1.ResourceStorage]
+			capacity := pvc.Status.Capacity[v1.ResourceStorage]
 			for _, cond := range pvc.Status.Conditions {
 				if cond.Type == v1.PersistentVolumeClaimFileSystemResizePending &&
 					cond.Status == v1.ConditionTrue {
-					needsRestart = true
-					return true, nil
+					if capacity.Cmp(requested) >= 0 {
+						needsRestart = true
+						return true, nil
+					}
+					// backend not expanded yet, keep waiting
+					return false, nil
 				}
 			}
-			requested := pvc.Spec.Resources.Requests[v1.ResourceStorage]
-			capacity := pvc.Status.Capacity[v1.ResourceStorage]
 			if capacity.Cmp(requested) >= 0 {
-				logger.Info("reached here : true")
 				return true, nil
 			}
 			return false, nil
