@@ -18,7 +18,6 @@ import (
 	v14 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -60,7 +59,7 @@ type KubernetesHelper interface {
 	GetConfigMap(name, namespace string) (*v1.ConfigMap, error)
 	PatchPVCAnnotations(name, namespace string, annotations map[string]string) error
 	ExpandPVC(pvc *v1.PersistentVolumeClaim) (resizeInProgress bool, err error)
-	WaitForPVCExpansion(pvcName, namespace string, desiredSize resource.Quantity, waitSeconds int) (needsRestart bool, err error)
+	WaitForPVCExpansion(pvcName, namespace string, waitSeconds int) (needsRestart bool, err error)
 	//CheckSpecChange(ctx ExecutionContext, spec interface{}, serviceName string) (bool, error)
 }
 
@@ -422,7 +421,7 @@ func (r *DefaultKubernetesHelperImpl) ExpandPVC(pvc *v1.PersistentVolumeClaim) (
 	return resizeInProgress, r.Client.Update(context.TODO(), foundPvc)
 }
 
-func (r *DefaultKubernetesHelperImpl) WaitForPVCExpansion(pvcName, namespace string, desiredSize resource.Quantity, waitSeconds int) (bool, error) {
+func (r *DefaultKubernetesHelperImpl) WaitForPVCExpansion(pvcName, namespace string, waitSeconds int) (bool, error) {
 	var needsRestart bool
 	err := wait.PollImmediate(2*time.Second, time.Duration(waitSeconds)*time.Second,
 		func() (bool, error) {
@@ -433,8 +432,9 @@ func (r *DefaultKubernetesHelperImpl) WaitForPVCExpansion(pvcName, namespace str
 			if pvc.Status.Phase != v1.ClaimBound {
 				return false, nil
 			}
+			requested := pvc.Spec.Resources.Requests[v1.ResourceStorage]
 			capacity := pvc.Status.Capacity[v1.ResourceStorage]
-			if capacity.Cmp(desiredSize) >= 0 {
+			if capacity.Cmp(requested) >= 0 {
 				return true, nil
 			}
 			for _, cond := range pvc.Status.Conditions {

@@ -5,7 +5,6 @@ import (
 
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/core"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -16,7 +15,6 @@ type WaitForPVCExpansionStep struct {
 	core.DefaultExecutable
 	WaitTimeout    int
 	PVCNamesVar    string
-	StorageSizes   []string
 	OnNeedsRestart func(ctx core.ExecutionContext) error
 }
 
@@ -32,13 +30,8 @@ func (r *WaitForPVCExpansionStep) Execute(ctx core.ExecutionContext) error {
 	pvcNames, _ := ctx.Get(r.PVCNamesVar).([]string)
 
 	anyNeedsRestart := false
-	for i, pvcName := range pvcNames {
-		desiredSize, err := r.desiredSizeForIndex(i)
-		if err != nil {
-			return fmt.Errorf("determining desired size for PVC %s: %w", pvcName, err)
-		}
-
-		needsRestart, err := helperImpl.WaitForPVCExpansion(pvcName, request.Namespace, desiredSize, r.WaitTimeout)
+	for _, pvcName := range pvcNames {
+		needsRestart, err := helperImpl.WaitForPVCExpansion(pvcName, request.Namespace, r.WaitTimeout)
 		if err != nil {
 			return fmt.Errorf("waiting for PVC %s expansion: %w", pvcName, err)
 		}
@@ -56,16 +49,4 @@ func (r *WaitForPVCExpansionStep) Execute(ctx core.ExecutionContext) error {
 
 func (r *WaitForPVCExpansionStep) Condition(ctx core.ExecutionContext) (bool, error) {
 	return true, nil
-}
-
-func (r *WaitForPVCExpansionStep) desiredSizeForIndex(idx int) (resource.Quantity, error) {
-	if len(r.StorageSizes) == 0 {
-		return resource.Quantity{}, fmt.Errorf("storage sizes not configured")
-	}
-	sizeStr := r.StorageSizes[idx%len(r.StorageSizes)]
-	qty, err := resource.ParseQuantity(sizeStr)
-	if err != nil {
-		return resource.Quantity{}, fmt.Errorf("invalid storage size %q: %w", sizeStr, err)
-	}
-	return qty, nil
 }
