@@ -17,13 +17,13 @@ import (
 	"go.uber.org/zap"
 	v14 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
@@ -444,48 +444,34 @@ func (r *DefaultKubernetesHelperImpl) WaitForPVCExpansion(pvcName, namespace str
 	logger := GetLogger(getEnvAsBool("DEBUG_LOG", true))
 	logger.Info("WaitForPVCExpansion ----")
 
-	pvc := &v1.PersistentVolumeClaim{}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: pvcName, Namespace: namespace}, pvc); err != nil {
-		return false, err
-	}
-	if pvc.Status.Phase != v1.ClaimBound {
-		return false, fmt.Errorf("PVC %s not Bound (phase=%s), waiting", pvcName, pvc.Status.Phase)
-	}
-
-	requested := pvc.Spec.Resources.Requests[v1.ResourceStorage]
-	capacity := pvc.Status.Capacity[v1.ResourceStorage]
-
-	// Backend fully expanded — filesystem resize (if any) is kubelet's job via NodeExpandVolume
-	if capacity.Cmp(requested) >= 0 {
-		// Check if pod restart is still needed (FileSystemResizePending set, capacity already updated)
-		for _, cond := range pvc.Status.Conditions {
-			if cond.Type == v1.PersistentVolumeClaimFileSystemResizePending &&
-				cond.Status == v1.ConditionTrue {
-				logger.Info(fmt.Sprintf("PVC %s: backend expanded, filesystem resize pending — needs pod restart", pvcName))
+	var needsRestart bool
+	err := wait.PollImmediate(2*time.Second, time.Duration(waitSeconds)*time.Second,
+		func() (bool, error) {
+			pvc := &v1.PersistentVolumeClaim{}
+			if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: pvcName, Namespace: namespace}, pvc); err != nil {
+				return false, err
+			}
+			if pvc.Status.Phase != v1.ClaimBound {
+				return false, nil
+			}
+			for _, cond := range pvc.Status.Conditions {
+				if cond.Type == v1.PersistentVolumeClaimFileSystemResizePending &&
+					cond.Status == v1.ConditionTrue {
+					needsRestart = true
+					return true, nil
+				}
+			}
+			requested := pvc.Spec.Resources.Requests[v1.ResourceStorage]
+			capacity := pvc.Status.Capacity[v1.ResourceStorage]
+			if capacity.Cmp(requested) >= 0 {
 				return true, nil
 			}
-		}
-		logger.Info(fmt.Sprintf("PVC %s: expansion complete", pvcName))
-		return false, nil
-	}
-
-	// FileSystemResizePending set but capacity < requested: Cinder backend not yet done.
-	// Requeue and wait — do NOT restart pod yet or NodeExpandVolume will fail.
-	for _, cond := range pvc.Status.Conditions {
-		if cond.Type == v1.PersistentVolumeClaimFileSystemResizePending &&
-			cond.Status == v1.ConditionTrue {
-			logger.Info(fmt.Sprintf("PVC %s: FileSystemResizePending but capacity %s < requested %s — backend still expanding, requeueing",
-				pvcName, capacity.String(), requested.String()))
-			return false, fmt.Errorf("PVC %s backend expansion in progress (%s/%s), waiting",
-				pvcName, capacity.String(), requested.String())
-		}
-	}
-
-	// Backend expansion in progress, no condition yet
-	logger.Info(fmt.Sprintf("PVC %s: capacity %s < requested %s — backend expanding, requeueing",
-		pvcName, capacity.String(), requested.String()))
-	return false, fmt.Errorf("PVC %s backend expansion in progress (%s/%s), waiting",
-		pvcName, capacity.String(), requested.String())
+			return false, nil
+		},
+	)
+	logger.Sugar().Infof("wait seconds %v", waitSeconds)
+	logger.Info("reached here at last")
+	return needsRestart, err
 }
 
 func (r *DefaultKubernetesHelperImpl) FindPodsUsingPVC(pvcName, namespace string) ([]v1.Pod, error) {
