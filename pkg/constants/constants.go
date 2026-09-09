@@ -49,5 +49,8 @@ const Tmp = "tmp"
 const Username = "username"
 const Password = "password"
 
+// pvc resize
+const PVCResizeNeeded = "pvcResizeNeeded"
+
 // vault
 const TokenFilePath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
