@@ -373,6 +373,8 @@ func (r *DefaultKubernetesHelperImpl) PatchPVCAnnotations(name, namespace string
 }
 
 func (r *DefaultKubernetesHelperImpl) ExpandPVC(pvc *v1.PersistentVolumeClaim) (bool, error) {
+	logger := GetLogger(getEnvAsBool("DEBUG_LOG", true))
+	logger.Info("Expand PVC func")
 	foundPvc := &v1.PersistentVolumeClaim{}
 	err := r.Client.Get(context.TODO(), types.NamespacedName{Name: pvc.Name, Namespace: pvc.Namespace}, foundPvc)
 	if errors.IsNotFound(err) {
@@ -411,6 +413,12 @@ func (r *DefaultKubernetesHelperImpl) ExpandPVC(pvc *v1.PersistentVolumeClaim) (
 		if !capacity.IsZero() && capacity.Cmp(desiredSize) < 0 {
 			return true, nil
 		}
+		for _, cond := range foundPvc.Status.Conditions {
+			if cond.Type == v1.PersistentVolumeClaimFileSystemResizePending &&
+				cond.Status == v1.ConditionTrue {
+				return true, nil
+			}
+		}
 	}
 
 	if !changed {
@@ -418,13 +426,18 @@ func (r *DefaultKubernetesHelperImpl) ExpandPVC(pvc *v1.PersistentVolumeClaim) (
 	}
 
 	resizeInProgress := desiredSize.Cmp(currentSize) > 0
+	logger.Info("Resize done ")
 	return resizeInProgress, r.Client.Update(context.TODO(), foundPvc)
 }
 
 func (r *DefaultKubernetesHelperImpl) WaitForPVCExpansion(pvcName, namespace string, waitSeconds int) (bool, error) {
+	logger := GetLogger(getEnvAsBool("DEBUG_LOG", true))
+	logger.Info("WaitForPVCExpansion ----")
+
 	var needsRestart bool
 	err := wait.PollImmediate(2*time.Second, time.Duration(waitSeconds)*time.Second,
 		func() (bool, error) {
+			logger.Info("------ polling ------")
 			pvc := &v1.PersistentVolumeClaim{}
 			if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: pvcName, Namespace: namespace}, pvc); err != nil {
 				return false, err
@@ -442,11 +455,14 @@ func (r *DefaultKubernetesHelperImpl) WaitForPVCExpansion(pvcName, namespace str
 			requested := pvc.Spec.Resources.Requests[v1.ResourceStorage]
 			capacity := pvc.Status.Capacity[v1.ResourceStorage]
 			if capacity.Cmp(requested) >= 0 {
+				logger.Info("reached here : true")
 				return true, nil
 			}
 			return false, nil
 		},
 	)
+	logger.Sugar().Infof("wait seconds %v", waitSeconds)
+	logger.Info("reached here at last")
 	return needsRestart, err
 }
 

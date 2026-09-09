@@ -5,6 +5,7 @@ import (
 
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/constants"
 	"github.com/Netcracker/qubership-nosqldb-operator-core/pkg/core"
+	"go.uber.org/zap"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -19,10 +20,14 @@ type WaitForPVCExpansionStep struct {
 }
 
 func (r *WaitForPVCExpansionStep) Execute(ctx core.ExecutionContext) error {
+	log := ctx.Get(constants.ContextLogger).(*zap.Logger)
+	log.Info("WaitForPVCExpansionStep started")
 	resizeNeeded, _ := ctx.Get(constants.PVCResizeNeeded).(bool)
 	if !resizeNeeded {
 		return nil
 	}
+
+	log.Sugar().Infof("resize needed : %s", resizeNeeded)
 
 	helperImpl := ctx.Get(constants.KubernetesHelperImpl).(core.KubernetesHelper)
 	request := ctx.Get(constants.ContextRequest).(reconcile.Request)
@@ -41,6 +46,7 @@ func (r *WaitForPVCExpansionStep) Execute(ctx core.ExecutionContext) error {
 	}
 
 	if anyNeedsRestart && r.OnNeedsRestart != nil {
+		log.Info("On needs restart called")
 		return r.OnNeedsRestart(ctx)
 	}
 
