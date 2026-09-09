@@ -17,7 +17,6 @@ import (
 	"go.uber.org/zap"
 	v14 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
-	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -61,9 +60,6 @@ type KubernetesHelper interface {
 	PatchPVCAnnotations(name, namespace string, annotations map[string]string) error
 	ExpandPVC(pvc *v1.PersistentVolumeClaim) (resizeInProgress bool, err error)
 	WaitForPVCExpansion(pvcName, namespace string, waitSeconds int) (needsRestart bool, err error)
-	FindPodsUsingPVC(pvcName, namespace string) ([]v1.Pod, error)
-	GetPVNameFromPVC(pvcName, namespace string) (string, error)
-	WaitForVolumeDetach(pvName, nodeName string, waitSeconds int) error
 	GetStatefulSetByName(name, namespace string) (*v14.StatefulSet, error)
 	ScaleStatefulSetByName(name, namespace string, replicas, timeout int) error
 	//CheckSpecChange(ctx ExecutionContext, spec interface{}, serviceName string) (bool, error)
@@ -436,90 +432,39 @@ func (r *DefaultKubernetesHelperImpl) ExpandPVC(pvc *v1.PersistentVolumeClaim) (
 	return resizeInProgress, r.Client.Update(context.TODO(), foundPvc)
 }
 
-// WaitForPVCExpansion checks PVC expansion state once (non-blocking).
-// Returns (needsRestart=false, nil) when done without restart needed.
-// Returns (needsRestart=true, nil) when backend expanded and filesystem resize requires pod restart.
-// Returns (false, ErrExpansionPending) when backend has not yet expanded — caller should requeue.
 func (r *DefaultKubernetesHelperImpl) WaitForPVCExpansion(pvcName, namespace string, waitSeconds int) (bool, error) {
-	logger := GetLogger(getEnvAsBool("DEBUG_LOG", true))
-	logger.Info("WaitForPVCExpansion ----")
+    logger := GetLogger(getEnvAsBool("DEBUG_LOG", true))
+    logger.Info("WaitForPVCExpansion ----")
 
-	var needsRestart bool
-	err := wait.PollImmediate(2*time.Second, time.Duration(waitSeconds)*time.Second,
-		func() (bool, error) {
-			pvc := &v1.PersistentVolumeClaim{}
-			if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: pvcName, Namespace: namespace}, pvc); err != nil {
-				return false, err
-			}
-			if pvc.Status.Phase != v1.ClaimBound {
-				return false, nil
-			}
-			for _, cond := range pvc.Status.Conditions {
-				if cond.Type == v1.PersistentVolumeClaimFileSystemResizePending &&
-					cond.Status == v1.ConditionTrue {
-					needsRestart = true
-					return true, nil
-				}
-			}
-			requested := pvc.Spec.Resources.Requests[v1.ResourceStorage]
-			capacity := pvc.Status.Capacity[v1.ResourceStorage]
-			if capacity.Cmp(requested) >= 0 {
-				return true, nil
-			}
-			return false, nil
-		},
-	)
-	logger.Sugar().Infof("wait seconds %v", waitSeconds)
-	logger.Info("reached here at last")
-	return needsRestart, err
-}
-
-func (r *DefaultKubernetesHelperImpl) FindPodsUsingPVC(pvcName, namespace string) ([]v1.Pod, error) {
-	podList := &v1.PodList{}
-	if err := r.Client.List(context.Background(), podList, client.InNamespace(namespace)); err != nil {
-		return nil, err
-	}
-	var result []v1.Pod
-	for _, pod := range podList.Items {
-		for _, vol := range pod.Spec.Volumes {
-			if vol.PersistentVolumeClaim != nil && vol.PersistentVolumeClaim.ClaimName == pvcName {
-				result = append(result, pod)
-				break
-			}
-		}
-	}
-	return result, nil
-}
-
-func (r *DefaultKubernetesHelperImpl) GetPVNameFromPVC(pvcName, namespace string) (string, error) {
-	pvc := &v1.PersistentVolumeClaim{}
-	if err := r.Client.Get(context.Background(), types.NamespacedName{Name: pvcName, Namespace: namespace}, pvc); err != nil {
-		return "", err
-	}
-	if pvc.Spec.VolumeName == "" {
-		return "", fmt.Errorf("PVC %s not bound to any PV", pvcName)
-	}
-	return pvc.Spec.VolumeName, nil
-}
-
-func (r *DefaultKubernetesHelperImpl) WaitForVolumeDetach(pvName, nodeName string, waitSeconds int) error {
-	return wait.PollImmediate(5*time.Second, time.Duration(waitSeconds)*time.Second,
-		func() (bool, error) {
-			var attachments storagev1.VolumeAttachmentList
-			if err := r.Client.List(context.Background(), &attachments); err != nil {
-				return false, err
-			}
-			for _, va := range attachments.Items {
-				if va.Spec.Source.PersistentVolumeName != nil &&
-					*va.Spec.Source.PersistentVolumeName == pvName &&
-					va.Spec.NodeName == nodeName {
-					return false, nil
-				}
-			}
-			return true, nil
-		},
-	)
-}
+    var needsRestart bool
+    err := wait.PollImmediate(2*time.Second, time.Duration(waitSeconds)*time.Second,
+        func() (bool, error) {
+            pvc := &v1.PersistentVolumeClaim{}
+            if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: pvcName, Namespace: namespace}, pvc); err != nil {
+                return false, err
+            }
+            if pvc.Status.Phase != v1.ClaimBound {
+                return false, nil
+            }
+            for _, cond := range pvc.Status.Conditions {
+                if cond.Type == v1.PersistentVolumeClaimFileSystemResizePending &&
+                    cond.Status == v1.ConditionTrue {
+                    needsRestart = true
+                    return true, nil
+                }
+            }
+            requested := pvc.Spec.Resources.Requests[v1.ResourceStorage]
+            capacity := pvc.Status.Capacity[v1.ResourceStorage]
+            if capacity.Cmp(requested) >= 0 {
+                return true, nil
+            }
+            return false, nil
+        },
+    )
+    logger.Sugar().Infof("wait seconds %v", waitSeconds)
+    logger.Info("reached here at last")
+    return needsRestart, err
+} 
 
 func (r *DefaultKubernetesHelperImpl) GetStatefulSetByName(name, namespace string) (*v14.StatefulSet, error) {
 	ss := &v14.StatefulSet{}
