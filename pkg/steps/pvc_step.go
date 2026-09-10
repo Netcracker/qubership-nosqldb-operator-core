@@ -65,14 +65,16 @@ func (r *CreatePVCStep) Execute(ctx core.ExecutionContext) error {
 	}
 
 	var pvcArray []string
+	resizeNeeded := false
 	for i := r.StartIndex; i < (maxSize + r.StartIndex); i++ {
 		template := utils.PVCTemplate(*r.Storage, i, r.NameFormat, r.LabelSelector, request.Namespace, r.AccessMode)
 
 		if _, exists := existingPVCs[template.Name]; exists {
-			log.Debug(fmt.Sprintf("PVC %s already exists, updating annotations", template.Name))
-			if len(r.Storage.Annotations) > 0 {
-				err := helperImpl.PatchPVCAnnotations(template.Name, request.Namespace, r.Storage.Annotations)
-				core.PanicError(err, log.Error, "Patching annotations on PVC "+template.Name+" failed")
+			log.Debug(fmt.Sprintf("PVC %s already exists, checking for resize", template.Name))
+			inProgress, err := helperImpl.ExpandPVC(template)
+			core.PanicError(err, log.Error, "Resize check for PVC "+template.Name+" failed")
+			if inProgress {
+				resizeNeeded = true
 			}
 		} else {
 			err := helperImpl.CreateRuntimeObject(scheme, r.Owner, template, template.ObjectMeta)
@@ -81,6 +83,7 @@ func (r *CreatePVCStep) Execute(ctx core.ExecutionContext) error {
 
 		pvcArray = append(pvcArray, template.ObjectMeta.Name)
 	}
+	ctx.Set(constants.PVCResizeNeeded, resizeNeeded)
 
 	if r.WaitPVCBound {
 		for _, pvcName := range pvcArray {

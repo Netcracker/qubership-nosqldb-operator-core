@@ -58,6 +58,10 @@ type KubernetesHelper interface {
 	RestartPod(pod *v1.Pod, namespace string, waitSeconds int) error
 	GetConfigMap(name, namespace string) (*v1.ConfigMap, error)
 	PatchPVCAnnotations(name, namespace string, annotations map[string]string) error
+	ExpandPVC(pvc *v1.PersistentVolumeClaim) (resizeInProgress bool, err error)
+	WaitForPVCExpansion(pvcName, namespace string, waitSeconds int) (needsRestart bool, err error)
+	GetStatefulSetByName(name, namespace string) (*v14.StatefulSet, error)
+	ScaleStatefulSetByName(name, namespace string, replicas, timeout int) error
 	//CheckSpecChange(ctx ExecutionContext, spec interface{}, serviceName string) (bool, error)
 }
 
@@ -368,6 +372,115 @@ func (r *DefaultKubernetesHelperImpl) PatchPVCAnnotations(name, namespace string
 	pvc.Namespace = namespace
 	patch := fmt.Sprintf(`{"metadata":{"annotations":%s}}`, string(annotationsJSON))
 	return r.Client.Patch(context.Background(), pvc, client.RawPatch(types.MergePatchType, []byte(patch)))
+}
+
+func (r *DefaultKubernetesHelperImpl) ExpandPVC(pvc *v1.PersistentVolumeClaim) (bool, error) {
+	foundPvc := &v1.PersistentVolumeClaim{}
+	err := r.Client.Get(context.TODO(), types.NamespacedName{Name: pvc.Name, Namespace: pvc.Namespace}, foundPvc)
+	if errors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	currentSize := foundPvc.Spec.Resources.Requests[v1.ResourceStorage]
+	desiredSize := pvc.Spec.Resources.Requests[v1.ResourceStorage]
+
+	changed := false
+
+	if len(pvc.Annotations) > 0 {
+		if foundPvc.Annotations == nil {
+			foundPvc.Annotations = make(map[string]string)
+		}
+		for k, v := range pvc.Annotations {
+			if foundPvc.Annotations[k] != v {
+				foundPvc.Annotations[k] = v
+				changed = true
+			}
+		}
+	}
+
+	switch desiredSize.Cmp(currentSize) {
+	case 1:
+		foundPvc.Spec.Resources.Requests[v1.ResourceStorage] = desiredSize
+		changed = true
+	case -1:
+		return false, fmt.Errorf("PVC %s shrinking from %s to %s is not supported",
+			pvc.Name, currentSize.String(), desiredSize.String())
+	case 0:
+		capacity := foundPvc.Status.Capacity[v1.ResourceStorage]
+		if !capacity.IsZero() && capacity.Cmp(desiredSize) < 0 {
+			return true, nil
+		}
+		for _, cond := range foundPvc.Status.Conditions {
+			if cond.Type == v1.PersistentVolumeClaimFileSystemResizePending &&
+				cond.Status == v1.ConditionTrue {
+				return true, nil
+			}
+		}
+	}
+
+	if !changed {
+		return false, nil
+	}
+
+	resizeInProgress := desiredSize.Cmp(currentSize) > 0
+	return resizeInProgress, r.Client.Update(context.TODO(), foundPvc)
+}
+
+func (r *DefaultKubernetesHelperImpl) WaitForPVCExpansion(pvcName, namespace string, waitSeconds int) (bool, error) {
+	var needsRestart bool
+	err := wait.PollImmediate(2*time.Second, time.Duration(waitSeconds)*time.Second,
+		func() (bool, error) {
+			pvc := &v1.PersistentVolumeClaim{}
+			if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: pvcName, Namespace: namespace}, pvc); err != nil {
+				return false, err
+			}
+			if pvc.Status.Phase != v1.ClaimBound {
+				return false, nil
+			}
+			for _, cond := range pvc.Status.Conditions {
+				if cond.Type == v1.PersistentVolumeClaimFileSystemResizePending &&
+					cond.Status == v1.ConditionTrue {
+					needsRestart = true
+					return true, nil
+				}
+			}
+			requested := pvc.Spec.Resources.Requests[v1.ResourceStorage]
+			capacity := pvc.Status.Capacity[v1.ResourceStorage]
+			if capacity.Cmp(requested) >= 0 {
+				return true, nil
+			}
+			return false, nil
+		},
+	)
+	return needsRestart, err
+}
+
+func (r *DefaultKubernetesHelperImpl) GetStatefulSetByName(name, namespace string) (*v14.StatefulSet, error) {
+	ss := &v14.StatefulSet{}
+	if err := r.Client.Get(context.Background(), types.NamespacedName{Name: name, Namespace: namespace}, ss); err != nil {
+		return nil, err
+	}
+	return ss, nil
+}
+
+func (r *DefaultKubernetesHelperImpl) ScaleStatefulSetByName(name, namespace string, replicas, timeout int) error {
+	ss, err := r.GetStatefulSetByName(name, namespace)
+	if err != nil {
+		return err
+	}
+	rep := int32(replicas)
+	patch := client.MergeFrom(ss.DeepCopy())
+	ss.Spec.Replicas = &rep
+	if err := r.Client.Patch(context.TODO(), ss, patch); err != nil {
+		return err
+	}
+	if replicas == 0 {
+		return r.WaitForPodsCountByLabel(ss.Spec.Template.Labels, namespace, 0, timeout)
+	}
+	return r.WaitForPodsReady(ss.Spec.Template.Labels, namespace, replicas, timeout)
 }
 
 func ListRuntimeObjectsByName(obj client.Object,
