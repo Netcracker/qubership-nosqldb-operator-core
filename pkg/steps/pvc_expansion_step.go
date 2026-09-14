@@ -47,7 +47,17 @@ func (r *WaitForPVCExpansionStep) Execute(ctx core.ExecutionContext) error {
 
 	if anyNeedsRestart && r.OnNeedsRestart != nil {
 		log.Info("On needs restart called")
-		return r.OnNeedsRestart(ctx)
+		if err := r.OnNeedsRestart(ctx); err != nil {
+			return err
+		}
+		// Wait for the node-side filesystem resize to complete on every PVC that needed a restart.
+		// Without this, the pod remounts before NodeExpandVolume finishes and the CSI driver errors.
+		for _, pvcName := range pvcNames {
+			log.Sugar().Infof("Waiting for node expansion to complete on PVC %s", pvcName)
+			if err := helperImpl.WaitForPVCNodeExpansion(pvcName, request.Namespace, r.WaitTimeout); err != nil {
+				return fmt.Errorf("waiting for node expansion of PVC %s: %w", pvcName, err)
+			}
+		}
 	}
 
 	return nil

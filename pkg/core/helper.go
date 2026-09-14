@@ -60,6 +60,7 @@ type KubernetesHelper interface {
 	PatchPVCAnnotations(name, namespace string, annotations map[string]string) error
 	ExpandPVC(pvc *v1.PersistentVolumeClaim) (resizeInProgress bool, err error)
 	WaitForPVCExpansion(pvcName, namespace string, waitSeconds int) (needsRestart bool, err error)
+	WaitForPVCNodeExpansion(pvcName, namespace string, waitSeconds int) error
 	GetStatefulSetByName(name, namespace string) (*v14.StatefulSet, error)
 	ScaleStatefulSetByName(name, namespace string, replicas, timeout int) error
 	//CheckSpecChange(ctx ExecutionContext, spec interface{}, serviceName string) (bool, error)
@@ -465,6 +466,28 @@ func (r *DefaultKubernetesHelperImpl) WaitForPVCExpansion(pvcName, namespace str
     logger.Info("reached here at last")
     return needsRestart, err
 } 
+
+// WaitForPVCNodeExpansion waits until Status.Capacity >= requested size, meaning the
+// node-side filesystem resize completed after the pod was restarted.
+func (r *DefaultKubernetesHelperImpl) WaitForPVCNodeExpansion(pvcName, namespace string, waitSeconds int) error {
+	logger := GetLogger(getEnvAsBool("DEBUG_LOG", true))
+	logger.Sugar().Infof("WaitForPVCNodeExpansion waiting for %s", pvcName)
+	return wait.PollImmediate(5*time.Second, time.Duration(waitSeconds)*time.Second,
+		func() (bool, error) {
+			pvc := &v1.PersistentVolumeClaim{}
+			if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: pvcName, Namespace: namespace}, pvc); err != nil {
+				return false, err
+			}
+			requested := pvc.Spec.Resources.Requests[v1.ResourceStorage]
+			capacity := pvc.Status.Capacity[v1.ResourceStorage]
+			done := capacity.Cmp(requested) >= 0
+			if !done {
+				logger.Sugar().Infof("WaitForPVCNodeExpansion %s: capacity=%s requested=%s, still waiting", pvcName, capacity.String(), requested.String())
+			}
+			return done, nil
+		},
+	)
+}
 
 func (r *DefaultKubernetesHelperImpl) GetStatefulSetByName(name, namespace string) (*v14.StatefulSet, error) {
 	ss := &v14.StatefulSet{}
