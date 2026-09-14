@@ -83,6 +83,10 @@ func (r *CreatePVCStep) Execute(ctx core.ExecutionContext) error {
 
 		pvcArray = append(pvcArray, template.ObjectMeta.Name)
 	}
+	// OR with any prior true set by a previous CreatePVCStep — never clear a resize that's already in progress.
+	if prev, ok := ctx.Get(constants.PVCResizeNeeded).(bool); ok && prev {
+		resizeNeeded = true
+	}
 	ctx.Set(constants.PVCResizeNeeded, resizeNeeded)
 
 	if r.WaitPVCBound {
