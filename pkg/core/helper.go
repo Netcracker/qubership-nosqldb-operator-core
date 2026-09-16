@@ -62,6 +62,7 @@ type KubernetesHelper interface {
 	WaitForPVCExpansion(pvcName, namespace string, waitSeconds int) (needsRestart bool, err error)
 	GetStatefulSetByName(name, namespace string) (*v14.StatefulSet, error)
 	ScaleStatefulSetByName(name, namespace string, replicas, timeout int) error
+	UpdateStatus(ctx context.Context, obj client.Object) error
 	//CheckSpecChange(ctx ExecutionContext, spec interface{}, serviceName string) (bool, error)
 }
 
@@ -146,6 +147,10 @@ func (r *DefaultKubernetesHelperImpl) WaitForPodsCountByLabel(labelSelectors map
 	return wait.PollImmediate(time.Second, time.Second*time.Duration(waitSeconds), func() (done bool, err error) {
 		return r.checkPodsCountByLabel(labelSelectors, namespace, numberOfPods)
 	})
+}
+
+func (r *DefaultKubernetesHelperImpl) UpdateStatus(ctx context.Context, obj client.Object) error {
+	return r.Client.Status().Update(ctx, obj)
 }
 
 func (r *DefaultKubernetesHelperImpl) checkPodsByLabel(labelSelectors map[string]string, namespace string, numberOfPods int, podPhase v1.PodPhase, containerCheckFunc func(status v1.ContainerStatus) (bool, error)) (done bool, err error) {
