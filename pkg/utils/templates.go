@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -62,8 +63,14 @@ func PVCTemplate(storage types.StorageRequirements, pvcId int, nameFormat string
 		}
 	}
 
-	for k, v := range storage.Annotations {
-		pvc.ObjectMeta.Annotations[k] = v
+	if len(storage.Annotations) > 0 {
+		customKeys := make([]string, 0, len(storage.Annotations))
+		for k, v := range storage.Annotations {
+			pvc.ObjectMeta.Annotations[k] = v
+			customKeys = append(customKeys, k)
+		}
+		customKeysJSON, _ := json.Marshal(customKeys)
+		pvc.ObjectMeta.Annotations[constants.PVCCustomAnnotationsKey] = string(customKeysJSON)
 	}
 
 	return pvc

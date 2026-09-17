@@ -392,16 +392,16 @@ func (r *DefaultKubernetesHelperImpl) ExpandPVC(pvc *v1.PersistentVolumeClaim) (
 	if foundPvc.Annotations == nil {
 		foundPvc.Annotations = make(map[string]string)
 	}
+	// Apply all desired annotations from the template.
 	for k, v := range pvc.Annotations {
 		if foundPvc.Annotations[k] != v {
 			foundPvc.Annotations[k] = v
 			changed = true
 		}
 	}
-	// Remove annotations that the operator previously managed but are no longer desired.
-	// We track previously-managed keys in a dedicated annotation to avoid deleting
-	// system or third-party annotations the operator never set.
-	if prevJSON, ok := foundPvc.Annotations[constants.LastAppliedPVCAnnotationsKey]; ok {
+	// Read the previously tracked custom keys from the live PVC.
+	// Remove any that are no longer in the desired set (i.e. user removed them from spec).
+	if prevJSON, ok := foundPvc.Annotations[constants.PVCCustomAnnotationsKey]; ok {
 		var prevKeys []string
 		if err := json.Unmarshal([]byte(prevJSON), &prevKeys); err == nil {
 			for _, k := range prevKeys {
@@ -411,16 +411,13 @@ func (r *DefaultKubernetesHelperImpl) ExpandPVC(pvc *v1.PersistentVolumeClaim) (
 				}
 			}
 		}
-	}
-	// Store the current set of managed annotation keys so we can reconcile removals next time.
-	managedKeys := make([]string, 0, len(pvc.Annotations))
-	for k := range pvc.Annotations {
-		managedKeys = append(managedKeys, k)
-	}
-	managedKeysJSON, _ := json.Marshal(managedKeys)
-	if string(managedKeysJSON) != foundPvc.Annotations[constants.LastAppliedPVCAnnotationsKey] {
-		foundPvc.Annotations[constants.LastAppliedPVCAnnotationsKey] = string(managedKeysJSON)
-		changed = true
+		// Update the tracked key list to whatever the template now carries.
+		newCustomKeysJSON := pvc.Annotations[constants.PVCCustomAnnotationsKey]
+		if newCustomKeysJSON == "" {
+			delete(foundPvc.Annotations, constants.PVCCustomAnnotationsKey)
+		} else if newCustomKeysJSON != prevJSON {
+			foundPvc.Annotations[constants.PVCCustomAnnotationsKey] = newCustomKeysJSON
+		}
 	}
 
 	switch desiredSize.Cmp(currentSize) {
