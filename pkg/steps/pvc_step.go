@@ -68,9 +68,11 @@ func (r *CreatePVCStep) Execute(ctx core.ExecutionContext) error {
 	resizeNeeded := false
 	for i := r.StartIndex; i < (maxSize + r.StartIndex); i++ {
 		template := utils.PVCTemplate(*r.Storage, i, r.NameFormat, r.LabelSelector, request.Namespace, r.AccessMode)
-
 		if _, exists := existingPVCs[template.Name]; exists {
-			log.Debug(fmt.Sprintf("PVC %s already exists, checking for resize", template.Name))
+			log.Debug(fmt.Sprintf("PVC %s already exists, checking for resize and updating annotations", template.Name))
+			err := helperImpl.PatchPVCAnnotations(ctx, template.Name, request.Namespace, r.Storage.Annotations)
+			core.PanicError(err, log.Error, "Patching annotations on PVC "+template.Name+" failed")
+
 			inProgress, err := helperImpl.ExpandPVC(template)
 			core.PanicError(err, log.Error, "Resize check for PVC "+template.Name+" failed")
 			if inProgress {
