@@ -51,6 +51,7 @@ const Password = "password"
 
 // pvc resize
 const PVCResizeNeeded = "pvcResizeNeeded"
+const LastAppliedPVCAnnotationsKey = "last-applied-pvc-annotations"
 
 // vault
 const TokenFilePath = "/var/run/secrets/kubernetes.io/serviceaccount/token"

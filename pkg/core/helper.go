@@ -389,16 +389,38 @@ func (r *DefaultKubernetesHelperImpl) ExpandPVC(pvc *v1.PersistentVolumeClaim) (
 
 	changed := false
 
-	if len(pvc.Annotations) > 0 {
-		if foundPvc.Annotations == nil {
-			foundPvc.Annotations = make(map[string]string)
+	if foundPvc.Annotations == nil {
+		foundPvc.Annotations = make(map[string]string)
+	}
+	for k, v := range pvc.Annotations {
+		if foundPvc.Annotations[k] != v {
+			foundPvc.Annotations[k] = v
+			changed = true
 		}
-		for k, v := range pvc.Annotations {
-			if foundPvc.Annotations[k] != v {
-				foundPvc.Annotations[k] = v
-				changed = true
+	}
+	// Remove annotations that the operator previously managed but are no longer desired.
+	// We track previously-managed keys in a dedicated annotation to avoid deleting
+	// system or third-party annotations the operator never set.
+	if prevJSON, ok := foundPvc.Annotations[constants.LastAppliedPVCAnnotationsKey]; ok {
+		var prevKeys []string
+		if err := json.Unmarshal([]byte(prevJSON), &prevKeys); err == nil {
+			for _, k := range prevKeys {
+				if _, desired := pvc.Annotations[k]; !desired {
+					delete(foundPvc.Annotations, k)
+					changed = true
+				}
 			}
 		}
+	}
+	// Store the current set of managed annotation keys so we can reconcile removals next time.
+	managedKeys := make([]string, 0, len(pvc.Annotations))
+	for k := range pvc.Annotations {
+		managedKeys = append(managedKeys, k)
+	}
+	managedKeysJSON, _ := json.Marshal(managedKeys)
+	if string(managedKeysJSON) != foundPvc.Annotations[constants.LastAppliedPVCAnnotationsKey] {
+		foundPvc.Annotations[constants.LastAppliedPVCAnnotationsKey] = string(managedKeysJSON)
+		changed = true
 	}
 
 	switch desiredSize.Cmp(currentSize) {
