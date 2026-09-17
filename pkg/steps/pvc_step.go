@@ -16,16 +16,17 @@ import (
 
 type CreatePVCStep struct {
 	core.Executable
-	Storage           *types.StorageRequirements
-	NameFormat        string
-	LabelSelector     map[string]string
-	ContextVarToStore string
-	WaitTimeout       int
-	PVCCount          func(ctx core.ExecutionContext) int
-	StartIndex        int
-	Owner             v1.Object
-	WaitPVCBound      bool
-	AccessMode        v1core.PersistentVolumeAccessMode
+	Storage              *types.StorageRequirements
+	PVCStatusAnnotations map[string]string
+	NameFormat           string
+	LabelSelector        map[string]string
+	ContextVarToStore    string
+	WaitTimeout          int
+	PVCCount             func(ctx core.ExecutionContext) int
+	StartIndex           int
+	Owner                v1.Object
+	WaitPVCBound         bool
+	AccessMode           v1core.PersistentVolumeAccessMode
 }
 
 func (r *CreatePVCStep) Validate(ctx core.ExecutionContext) error {
@@ -70,7 +71,12 @@ func (r *CreatePVCStep) Execute(ctx core.ExecutionContext) error {
 		template := utils.PVCTemplate(*r.Storage, i, r.NameFormat, r.LabelSelector, request.Namespace, r.AccessMode)
 
 		if _, exists := existingPVCs[template.Name]; exists {
-			log.Debug(fmt.Sprintf("PVC %s already exists, checking for resize", template.Name))
+			log.Debug(fmt.Sprintf("PVC %s already exists, checking for resize and updating annotations", template.Name))
+			if len(r.Storage.Annotations) > 0 {
+				err := helperImpl.PatchPVCAnnotations(template.Name, request.Namespace, r.Storage.Annotations, r.PVCStatusAnnotations)
+				core.PanicError(err, log.Error, "Patching annotations on PVC "+template.Name+" failed")
+			}
+
 			inProgress, err := helperImpl.ExpandPVC(template)
 			core.PanicError(err, log.Error, "Resize check for PVC "+template.Name+" failed")
 			if inProgress {

@@ -57,7 +57,8 @@ type KubernetesHelper interface {
 	ScaleReplicationController(obj *v1.ReplicationController, replicas, timeout int) error
 	RestartPod(pod *v1.Pod, namespace string, waitSeconds int) error
 	GetConfigMap(name, namespace string) (*v1.ConfigMap, error)
-	PatchPVCAnnotations(name, namespace string, annotations map[string]string) error
+	GetPVC(name string, namespace string) (*v1.PersistentVolumeClaim, error)
+	PatchPVCAnnotations(name, namespace string, annotations map[string]string, previousAnnotations map[string]string) error
 	ExpandPVC(pvc *v1.PersistentVolumeClaim) (resizeInProgress bool, err error)
 	WaitForPVCExpansion(pvcName, namespace string, waitSeconds int) (needsRestart bool, err error)
 	GetStatefulSetByName(name, namespace string) (*v14.StatefulSet, error)
@@ -362,16 +363,72 @@ func (r *DefaultKubernetesHelperImpl) ListRuntimeObjectsByLabels(list client.Obj
 	return err
 }
 
-func (r *DefaultKubernetesHelperImpl) PatchPVCAnnotations(name, namespace string, annotations map[string]string) error {
-	annotationsJSON, err := json.Marshal(annotations)
+func (r *DefaultKubernetesHelperImpl) GetPVC(name string, namespace string) (*v1.PersistentVolumeClaim, error) {
+	pvc := &v1.PersistentVolumeClaim{}
+
+	err := r.Client.Get(context.Background(),
+		client.ObjectKey{
+			Name:      name,
+			Namespace: namespace,
+		},
+		pvc,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return pvc, nil
+}
+
+func (r *DefaultKubernetesHelperImpl) PatchPVCAnnotations(name string, namespace string, desired map[string]string, previouslyManaged map[string]string) error {
+	pvc, err := r.GetPVC(name, namespace)
 	if err != nil {
 		return err
 	}
-	pvc := &v1.PersistentVolumeClaim{}
-	pvc.Name = name
-	pvc.Namespace = namespace
-	patch := fmt.Sprintf(`{"metadata":{"annotations":%s}}`, string(annotationsJSON))
-	return r.Client.Patch(context.Background(), pvc, client.RawPatch(types.MergePatchType, []byte(patch)))
+
+	annotationsPatch := make(map[string]interface{})
+
+	// Add/update annotations from the current desired configuration.
+	for key, value := range desired {
+		if pvc.Annotations == nil || pvc.Annotations[key] != value {
+			annotationsPatch[key] = value
+		}
+	}
+
+	// Remove annotations that were previously managed by the operator
+	// but are no longer present in the desired configuration.
+	for key := range previouslyManaged {
+		if _, exists := desired[key]; !exists {
+			if _, exists := pvc.Annotations[key]; exists {
+				annotationsPatch[key] = nil
+			}
+		}
+	}
+
+	// Nothing needs to be changed.
+	if len(annotationsPatch) == 0 {
+		return nil
+	}
+
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": annotationsPatch,
+		},
+	}
+
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+
+	return r.Client.Patch(
+		context.Background(),
+		pvc,
+		client.RawPatch(
+			types.MergePatchType,
+			patchBytes,
+		),
+	)
 }
 
 func (r *DefaultKubernetesHelperImpl) ExpandPVC(pvc *v1.PersistentVolumeClaim) (bool, error) {
