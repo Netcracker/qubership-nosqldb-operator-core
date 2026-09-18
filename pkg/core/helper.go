@@ -389,15 +389,34 @@ func (r *DefaultKubernetesHelperImpl) ExpandPVC(pvc *v1.PersistentVolumeClaim) (
 
 	changed := false
 
-	if len(pvc.Annotations) > 0 {
-		if foundPvc.Annotations == nil {
-			foundPvc.Annotations = make(map[string]string)
+	if foundPvc.Annotations == nil {
+		foundPvc.Annotations = make(map[string]string)
+	}
+	// Apply all desired annotations from the template.
+	for k, v := range pvc.Annotations {
+		if foundPvc.Annotations[k] != v {
+			foundPvc.Annotations[k] = v
+			changed = true
 		}
-		for k, v := range pvc.Annotations {
-			if foundPvc.Annotations[k] != v {
-				foundPvc.Annotations[k] = v
-				changed = true
+	}
+	// Read the previously tracked custom keys from the live PVC.
+	// Remove any that are no longer in the desired set (i.e. user removed them from spec).
+	if prevJSON, ok := foundPvc.Annotations[constants.PVCCustomAnnotationsKey]; ok {
+		var prevKeys []string
+		if err := json.Unmarshal([]byte(prevJSON), &prevKeys); err == nil {
+			for _, k := range prevKeys {
+				if _, desired := pvc.Annotations[k]; !desired {
+					delete(foundPvc.Annotations, k)
+					changed = true
+				}
 			}
+		}
+		// Update the tracked key list to whatever the template now carries.
+		newCustomKeysJSON := pvc.Annotations[constants.PVCCustomAnnotationsKey]
+		if newCustomKeysJSON == "" {
+			delete(foundPvc.Annotations, constants.PVCCustomAnnotationsKey)
+		} else if newCustomKeysJSON != prevJSON {
+			foundPvc.Annotations[constants.PVCCustomAnnotationsKey] = newCustomKeysJSON
 		}
 	}
 

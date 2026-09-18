@@ -51,6 +51,7 @@ const Password = "password"
 
 // pvc resize
 const PVCResizeNeeded = "pvcResizeNeeded"
+const PVCCustomAnnotationsKey = "deployment.netcracker.com/custom-annotations"
 
 // vault
 const TokenFilePath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
