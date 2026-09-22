@@ -392,16 +392,17 @@ func (r *DefaultKubernetesHelperImpl) ExpandPVC(pvc *v1.PersistentVolumeClaim) (
 	if foundPvc.Annotations == nil {
 		foundPvc.Annotations = make(map[string]string)
 	}
-	// Apply all desired annotations from the template.
+
+	prevJSON, hadPrev := foundPvc.Annotations[constants.PVCCustomAnnotationsKey]
+
 	for k, v := range pvc.Annotations {
 		if foundPvc.Annotations[k] != v {
 			foundPvc.Annotations[k] = v
 			changed = true
 		}
 	}
-	// Read the previously tracked custom keys from the live PVC.
-	// Remove any that are no longer in the desired set (i.e. user removed them from spec).
-	if prevJSON, ok := foundPvc.Annotations[constants.PVCCustomAnnotationsKey]; ok {
+
+	if hadPrev {
 		var prevKeys []string
 		if err := json.Unmarshal([]byte(prevJSON), &prevKeys); err == nil {
 			for _, k := range prevKeys {
