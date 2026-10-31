@@ -53,5 +53,9 @@ const Password = "password"
 const PVCResizeNeeded = "pvcResizeNeeded"
 const PVCCustomAnnotationsKey = "deployment.netcracker.com/custom-annotations"
 
+// PVCStorageClassBetaAnnotation is the deprecated storage class annotation. It is written on PVC creation only:
+// the API server rejects any change to it on an existing PVC ("field is immutable").
+const PVCStorageClassBetaAnnotation = "volume.beta.kubernetes.io/storage-class"
+
 // vault
 const TokenFilePath = "/var/run/secrets/kubernetes.io/serviceaccount/token"

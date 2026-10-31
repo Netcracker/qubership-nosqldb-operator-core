@@ -396,6 +396,10 @@ func (r *DefaultKubernetesHelperImpl) ExpandPVC(pvc *v1.PersistentVolumeClaim) (
 	prevJSON, hadPrev := foundPvc.Annotations[constants.PVCCustomAnnotationsKey]
 
 	for k, v := range pvc.Annotations {
+		// Immutable on an existing PVC, so PVCs created without it (e.g. by older versions) must be left alone.
+		if k == constants.PVCStorageClassBetaAnnotation {
+			continue
+		}
 		if foundPvc.Annotations[k] != v {
 			foundPvc.Annotations[k] = v
 			changed = true
