@@ -45,7 +45,6 @@ func PVCTemplate(storage types.StorageRequirements, pvcId int, nameFormat string
 	if len(storage.StorageClasses) > 0 {
 		properIndex := pvcId % len(storage.StorageClasses)
 		class := &storage.StorageClasses[properIndex]
-		pvc.ObjectMeta.Annotations["volume.beta.kubernetes.io/storage-class"] = *class
 		pvc.Spec.StorageClassName = class
 	}
 
