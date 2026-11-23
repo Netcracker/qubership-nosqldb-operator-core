@@ -161,8 +161,12 @@ func (r *DefaultKubernetesHelperImpl) checkPodsByLabel(labelSelectors map[string
 		}
 		return false, err
 	}
-	if len(podList.Items) == numberOfPods {
-		for _, pod := range podList.Items {
+	pods := podList.Items
+	if podPhase == v1.PodRunning {
+		pods = activePods(pods)
+	}
+	if len(pods) == numberOfPods {
+		for _, pod := range pods {
 			if pod.Status.Phase == podPhase {
 				for _, containerStatus := range pod.Status.ContainerStatuses {
 					result, err := containerCheckFunc(containerStatus)
@@ -180,6 +184,23 @@ func (r *DefaultKubernetesHelperImpl) checkPodsByLabel(labelSelectors map[string
 		return true, nil
 	}
 	return false, nil
+}
+
+// activePods drops pods that will never become ready again: pods being deleted
+// and pods in a terminal phase. An evicted pod stays in the Failed phase until
+// it is garbage collected, and its replacement already matches the same labels.
+func activePods(pods []v1.Pod) []v1.Pod {
+	active := make([]v1.Pod, 0, len(pods))
+	for _, pod := range pods {
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+		if pod.Status.Phase == v1.PodFailed || pod.Status.Phase == v1.PodSucceeded {
+			continue
+		}
+		active = append(active, pod)
+	}
+	return active
 }
 
 func (r *DefaultKubernetesHelperImpl) WaitForPodsCompleted(labelSelectors map[string]string, namespace string, numberOfPods int, waitSeconds int) error {
